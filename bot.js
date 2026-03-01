@@ -1,16 +1,18 @@
 const TelegramBot = require("node-telegram-bot-api");
 const Anthropic = require("@anthropic-ai/sdk");
 
-// ===== ENV =====
+// ===== ENV VARIABLES =====
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
 if (!TELEGRAM_TOKEN || !ANTHROPIC_API_KEY) {
-  console.error("❌ ENV variables missing");
+  console.error("❌ TELEGRAM_TOKEN или ANTHROPIC_API_KEY отсутствует");
   process.exit(1);
 }
 
+// ===== INIT =====
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
+
 const anthropic = new Anthropic({
   apiKey: ANTHROPIC_API_KEY,
 });
@@ -27,8 +29,8 @@ const SYSTEM_PROMPT = `
 5. Запись на просмотр
 
 Правила:
-- Отвечай только на русском
-- Будь вежлив
+- Отвечай на русском языке
+- Будь вежливым
 - Используй эмодзи
 - Не выдумывай конкретные объекты
 - Если клиент готов — предложи оставить номер телефона
@@ -36,7 +38,7 @@ const SYSTEM_PROMPT = `
 
 const sessions = {};
 
-// ===== START =====
+// ===== START COMMAND =====
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
   sessions[chatId] = [];
@@ -51,13 +53,13 @@ bot.onText(/\/start/, (msg) => {
           ["💰 Рассчитать ипотеку", "📄 Вопрос по документам"],
           ["📞 Записаться на просмотр"]
         ],
-        resize_keyboard: true,
-      },
+        resize_keyboard: true
+      }
     }
   );
 });
 
-// ===== MESSAGE =====
+// ===== MESSAGE HANDLER =====
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
@@ -68,36 +70,36 @@ bot.on("message", async (msg) => {
 
   sessions[chatId].push({
     role: "user",
-    content: text,
+    content: text
   });
 
   try {
     bot.sendChatAction(chatId, "typing");
 
     const response = await anthropic.messages.create({
-      model: "claude-3-haiku-20240307",
+      model: "claude-3-sonnet-20240229",
       max_tokens: 800,
       system: SYSTEM_PROMPT,
-      messages: sessions[chatId],
+      messages: sessions[chatId]
     });
 
     const reply = response.content[0].text;
 
     sessions[chatId].push({
       role: "assistant",
-      content: reply,
+      content: reply
     });
 
     await bot.sendMessage(chatId, reply);
 
-  } catch (err) {
-    console.error("❌ Anthropic error:", err);
+  } catch (error) {
+    console.error("❌ Ошибка Claude:", error);
 
     await bot.sendMessage(
       chatId,
-      "😔 Произошла техническая ошибка. Попробуйте позже."
+      "⚠️ Произошла техническая ошибка. Попробуйте позже."
     );
   }
 });
 
-console.log("🚀 Бот запущен");
+console.log("🚀 Realtor bot запущен");
