@@ -1,72 +1,104 @@
 const TelegramBot = require('node-telegram-bot-api');
 const Anthropic = require('@anthropic-ai/sdk');
 
-// ── Конфигурация ──────────────────────────────────────────────
+// ─── Токены из переменных окружения ─────────────────────────────
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 
 if (!TELEGRAM_TOKEN || !ANTHROPIC_KEY) {
-  console.error("❌ Не заданы переменные окружения!");
+  console.error("❌ Нет TELEGRAM_TOKEN или ANTHROPIC_API_KEY");
   process.exit(1);
 }
 
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 const client = new Anthropic({ apiKey: ANTHROPIC_KEY });
 
-// ── Системный промпт ──────────────────────────────────────────
+// ─── Память диалогов ─────────────────────────────────────────────
+const userMemory = {};
+
+// ─── Системный промпт ────────────────────────────────────────────
 const SYSTEM_PROMPT = `
 Ты — вежливый и профессиональный помощник агентства недвижимости.
-Ты общаешься с потенциальными покупателями и арендаторами квартир.
+
+Ты общаешься с клиентами по вопросам покупки и аренды жилья.
 
 Твои задачи:
-1. Подбор жилья
-2. Расчёт ипотеки
-3. Ответы на вопросы по документам и сделкам
-4. Предложение записи на консультацию
+1. Помочь подобрать квартиру
+2. Рассчитать ипотеку
+3. Ответить на вопросы по документам
+4. Записать на просмотр
+5. Предложить консультацию
 
 Правила:
-- Всегда отвечай на русском языке
-- Будь дружелюбен
+- Отвечай на русском
+- Будь дружелюбным
 - Используй эмодзи
 - Не выдумывай конкретные адреса
-- Предлагай оставить номер телефона при готовности к просмотру
+- При юридических вопросах рекомендуй консультацию юриста
 `;
 
-// ── Обработчик сообщений ──────────────────────────────────────
+// ─── Клавиатура ─────────────────────────────────────────────────
+const keyboard = {
+  reply_markup: {
+    keyboard: [
+      ['🏠 Хочу купить квартиру', '🔑 Хочу снять квартиру'],
+      ['💰 Рассчитать ипотеку', '❓ Вопрос по документам'],
+      ['📞 Записаться на просмотр']
+    ],
+    resize_keyboard: true
+  }
+};
+
+// ─── Обработка сообщений ─────────────────────────────────────────
 bot.on('message', async (msg) => {
+  const chatId = msg.chat.id;
+  const text = msg.text;
+
+  if (!text) return;
+
+  console.log("Сообщение:", text);
+
   try {
-    if (!msg.text) return;
-    if (msg.from.is_bot) return;
+    // создаём память если нет
+    if (!userMemory[chatId]) {
+      userMemory[chatId] = [];
+    }
 
-    const chatId = msg.chat.id;
-    const userText = msg.text;
+    // добавляем сообщение пользователя
+    userMemory[chatId].push({
+      role: "user",
+      content: text
+    });
 
-    console.log("📩 Сообщение:", userText);
-
-    // Небольшая задержка (чтобы избежать 429)
-    await new Promise(resolve => setTimeout(resolve, 700));
+    // ограничиваем память (последние 10 сообщений)
+    userMemory[chatId] = userMemory[chatId].slice(-10);
 
     const response = await client.messages.create({
-      model: "claude-3-haiku-20240307",
+      model: "claude-3-5-haiku-latest",
       max_tokens: 800,
-      messages: [
-        { role: "user", content: `${SYSTEM_PROMPT}\n\nКлиент: ${userText}` }
-      ]
+      system: SYSTEM_PROMPT,
+      messages: userMemory[chatId]
     });
 
     const reply = response.content[0].text;
 
-    await bot.sendMessage(chatId, reply);
+    // сохраняем ответ в память
+    userMemory[chatId].push({
+      role: "assistant",
+      content: reply
+    });
+
+    await bot.sendMessage(chatId, reply, keyboard);
 
   } catch (error) {
-    console.error("❌ Ошибка:", error.message);
-    bot.sendMessage(msg.chat.id, "😔 Произошла техническая ошибка. Попробуйте позже.");
+    console.error("❌ Ошибка:", error);
+
+    await bot.sendMessage(
+      chatId,
+      "😔 Произошла техническая ошибка. Попробуйте позже.",
+      keyboard
+    );
   }
 });
 
-// ── Обработка ошибок polling ───────────────────────────────────
-bot.on("polling_error", (error) => {
-  console.log("⚠️ Polling error:", error.message);
-});
-
-console.log("🤖 Бот запущен...");
+console.log("🤖 Бот запущен...");  
