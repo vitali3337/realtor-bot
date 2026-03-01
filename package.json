@@ -1,20 +1,12 @@
-"version": "1.0.0",
-  "description": "Telegram бизнес-ассистент на базе Claude AI",
+{
+  "name": "realtor-bot",
+  "version": "1.0.0",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js",
-    "dev": "nodemon bot.js"
+    "start": "node bot.js"
   },
   "dependencies": {
-    "node-telegram-bot-api": "^0.66.0",
-    "@anthropic-ai/sdk": "^0.24.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
+    "@anthropic-ai/sdk": "^0.24.3",
+    "node-telegram-bot-api": "^0.66.0"
   }
 }
-
-  
