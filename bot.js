@@ -1,104 +1,103 @@
 const TelegramBot = require("node-telegram-bot-api");
 const Anthropic = require("@anthropic-ai/sdk");
 
-// ───── Проверка переменных окружения ─────
+// ===== ENV =====
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
-if (!TELEGRAM_TOKEN || !ANTHROPIC_KEY) {
-  console.error("❌ TELEGRAM_TOKEN или ANTHROPIC_API_KEY не заданы");
+if (!TELEGRAM_TOKEN || !ANTHROPIC_API_KEY) {
+  console.error("❌ ENV variables missing");
   process.exit(1);
 }
 
-// ───── Инициализация ─────
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
-const client = new Anthropic({ apiKey: ANTHROPIC_KEY });
+const anthropic = new Anthropic({
+  apiKey: ANTHROPIC_API_KEY,
+});
 
-// ───── Память диалогов ─────
-const userMemory = {};
-
-// ───── Системный промпт ─────
+// ===== SYSTEM PROMPT =====
 const SYSTEM_PROMPT = `
 Ты — профессиональный помощник агентства недвижимости.
 
-Помогаешь:
-- Подобрать квартиру
-- Рассчитать ипотеку
-- Ответить по документам
-- Записать на просмотр
+Твои задачи:
+1. Подбор квартиры
+2. Помощь с арендой
+3. Расчёт ипотеки
+4. Ответы по документам
+5. Запись на просмотр
 
 Правила:
-- Отвечай на русском языке
+- Отвечай только на русском
 - Будь вежлив
 - Используй эмодзи
-- Не выдумывай конкретные адреса
-- Предлагай оставить номер телефона при готовности к просмотру
+- Не выдумывай конкретные объекты
+- Если клиент готов — предложи оставить номер телефона
 `;
 
-// ───── Клавиатура ─────
-const keyboard = {
-  reply_markup: {
-    keyboard: [
-      ["🏠 Хочу купить квартиру", "🔑 Хочу снять квартиру"],
-      ["💰 Рассчитать ипотеку", "❓ Вопрос по документам"],
-      ["📞 Записаться на просмотр"]
-    ],
-    resize_keyboard: true
-  }
-};
+const sessions = {};
 
-// ───── Обработка сообщений ─────
+// ===== START =====
+bot.onText(/\/start/, (msg) => {
+  const chatId = msg.chat.id;
+  sessions[chatId] = [];
+
+  bot.sendMessage(
+    chatId,
+    "👋 Добро пожаловать!\n\nЯ помогу вам с покупкой или арендой недвижимости.\n\nВыберите действие:",
+    {
+      reply_markup: {
+        keyboard: [
+          ["🏠 Хочу купить квартиру", "🔑 Хочу снять квартиру"],
+          ["💰 Рассчитать ипотеку", "📄 Вопрос по документам"],
+          ["📞 Записаться на просмотр"]
+        ],
+        resize_keyboard: true,
+      },
+    }
+  );
+});
+
+// ===== MESSAGE =====
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
 
-  if (!text) return;
+  if (!text || text.startsWith("/")) return;
 
-  console.log("📩 Сообщение:", text);
+  if (!sessions[chatId]) sessions[chatId] = [];
+
+  sessions[chatId].push({
+    role: "user",
+    content: text,
+  });
 
   try {
-    if (!userMemory[chatId]) {
-      userMemory[chatId] = [];
-    }
+    bot.sendChatAction(chatId, "typing");
 
-    userMemory[chatId].push({
-      role: "user",
-      content: text
-    });
-
-    userMemory[chatId] = userMemory[chatId].slice(-8);
-
-    const response = await client.messages.create({
-      model: "claude-3-sonnet-20240229",
-      max_tokens: 700,
+    const response = await anthropic.messages.create({
+      model: "claude-3-haiku-20240307",
+      max_tokens: 800,
       system: SYSTEM_PROMPT,
-      messages: userMemory[chatId]
+      messages: sessions[chatId],
     });
 
     const reply = response.content[0].text;
 
-    userMemory[chatId].push({
+    sessions[chatId].push({
       role: "assistant",
-      content: reply
+      content: reply,
     });
 
-    await bot.sendMessage(chatId, reply, keyboard);
+    await bot.sendMessage(chatId, reply);
 
-  } catch (error) {
-    console.error("❌ Ошибка Claude:", JSON.stringify(error, null, 2));
+  } catch (err) {
+    console.error("❌ Anthropic error:", err);
 
-    let errorMessage = "😔 Произошла техническая ошибка. Попробуйте позже.";
-
-    if (error?.status === 400) {
-      errorMessage = "⚠️ Ошибка доступа к API. Проверьте баланс в Claude.";
-    }
-
-    if (error?.status === 404) {
-      errorMessage = "⚠️ Модель недоступна для вашего аккаунта.";
-    }
-
-    await bot.sendMessage(chatId, errorMessage, keyboard);
+    await bot.sendMessage(
+      chatId,
+      "😔 Произошла техническая ошибка. Попробуйте позже."
+    );
   }
 });
 
-console.log("🤖 Бот успешно запущен");
+console.log("🚀 Бот запущен");
