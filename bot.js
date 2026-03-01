@@ -1,17 +1,22 @@
 const TelegramBot = require("node-telegram-bot-api");
 const Anthropic = require("@anthropic-ai/sdk");
 
-// ===== ENV VARIABLES =====
+// ===== ENV =====
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
 if (!TELEGRAM_TOKEN || !ANTHROPIC_API_KEY) {
-  console.error("❌ TELEGRAM_TOKEN или ANTHROPIC_API_KEY отсутствует");
+  console.error("❌ Не заданы переменные окружения");
   process.exit(1);
 }
 
 // ===== INIT =====
-const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
+const bot = new TelegramBot(TELEGRAM_TOKEN, {
+  polling: {
+    interval: 300,
+    autoStart: true
+  }
+});
 
 const anthropic = new Anthropic({
   apiKey: ANTHROPIC_API_KEY,
@@ -30,7 +35,7 @@ const SYSTEM_PROMPT = `
 
 Правила:
 - Отвечай на русском языке
-- Будь вежливым
+- Будь вежливым и дружелюбным
 - Используй эмодзи
 - Не выдумывай конкретные объекты
 - Если клиент готов — предложи оставить номер телефона
@@ -38,7 +43,7 @@ const SYSTEM_PROMPT = `
 
 const sessions = {};
 
-// ===== START COMMAND =====
+// ===== START =====
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
   sessions[chatId] = [];
@@ -59,7 +64,7 @@ bot.onText(/\/start/, (msg) => {
   );
 });
 
-// ===== MESSAGE HANDLER =====
+// ===== MESSAGE =====
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
@@ -77,7 +82,7 @@ bot.on("message", async (msg) => {
     bot.sendChatAction(chatId, "typing");
 
     const response = await anthropic.messages.create({
-      model: "claude-3-sonnet-20240229",
+      model: "claude-sonnet-4-6",
       max_tokens: 800,
       system: SYSTEM_PROMPT,
       messages: sessions[chatId]
@@ -93,13 +98,18 @@ bot.on("message", async (msg) => {
     await bot.sendMessage(chatId, reply);
 
   } catch (error) {
-    console.error("❌ Ошибка Claude:", error);
+    console.error("❌ Claude error:", error.message);
 
     await bot.sendMessage(
       chatId,
       "⚠️ Произошла техническая ошибка. Попробуйте позже."
     );
   }
+});
+
+// ===== ERROR HANDLER =====
+bot.on("polling_error", (error) => {
+  console.log("Polling error:", error.code);
 });
 
 console.log("🚀 Realtor bot запущен");
