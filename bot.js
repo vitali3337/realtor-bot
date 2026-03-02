@@ -2,6 +2,7 @@ require("dotenv").config();
 const TelegramBot = require("node-telegram-bot-api");
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const ADMIN_ID = 5705817827;
 
 if (!TELEGRAM_TOKEN) {
   console.error("❌ TELEGRAM_TOKEN не найден");
@@ -41,8 +42,7 @@ const keyboard = {
       ["💰 Рассчитать ипотеку", "📄 Вопрос по документам"],
       ["📞 Записаться на просмотр"]
     ],
-    resize_keyboard: true,
-    persistent: true
+    resize_keyboard: true
   }
 };
 
@@ -61,6 +61,7 @@ bot.onText(/\/start/, (msg) => {
 // 💬 ОБРАБОТКА СООБЩЕНИЙ
 // ===============================
 bot.on("message", async (msg) => {
+
   const chatId = msg.chat.id;
   const text = msg.text;
 
@@ -91,7 +92,10 @@ bot.on("message", async (msg) => {
     if (text === "📄 Вопрос по документам") {
       return bot.sendMessage(
         chatId,
-        "📄 Сделка в ПМР проходит так:\n\n✔️ Договор купли-продажи\n✔️ Регистрация в регистрационной палате\n✔️ Новый техпаспорт выдается в течение 5 рабочих дней",
+        "📄 Сделка в ПМР проходит так:\n\n" +
+        "✔️ Договор купли-продажи\n" +
+        "✔️ Регистрация в регистрационной палате\n" +
+        "✔️ Новый техпаспорт выдается в течение 5 рабочих дней",
         keyboard
       );
     }
@@ -114,11 +118,32 @@ bot.on("message", async (msg) => {
       );
     }
 
-    // ===== ЕСЛИ ВВЕДЕНО ЧИСЛО =====
+    // ===== ЕСЛИ ВВЕДЕН НОМЕР ТЕЛЕФОНА =====
+    if (/^\+?\d[\d\s]{5,}$/.test(text)) {
+
+      await bot.sendMessage(
+        ADMIN_ID,
+        `📞 Новая заявка!\n\n` +
+        `👤 Имя: ${msg.from.first_name}\n` +
+        `📎 Username: @${msg.from.username || "нет"}\n` +
+        `🆔 Telegram ID: ${msg.from.id}\n` +
+        `📱 Телефон: ${text}`
+      );
+
+      return bot.sendMessage(
+        chatId,
+        "✅ Спасибо! Менеджер свяжется с вами в ближайшее время.",
+        keyboard
+      );
+    }
+
+    // ===== ЕСЛИ ВВЕДЕНО ЧИСЛО (ИПОТЕКА) =====
     if (/^\d+$/.test(text)) {
+
       const price = parseInt(text);
 
       if (price >= 10000) {
+
         const calc = calculateMortgage(price);
 
         return bot.sendMessage(
@@ -150,6 +175,7 @@ bot.on("message", async (msg) => {
       keyboard
     );
   }
+
 });
 
 console.log("🚀 Realtor BOT запущен");
