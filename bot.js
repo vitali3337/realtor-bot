@@ -1,193 +1,109 @@
 require("dotenv").config();
-
-const express = require("express");
 const TelegramBot = require("node-telegram-bot-api");
-const Anthropic = require("@anthropic-ai/sdk");
 
-// ===== ПЕРЕМЕННЫЕ =====
-const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
-const ADMIN_ID = "-1003773163201";
+// ===== ПРОВЕРКА ТОКЕНА =====
+const TOKEN = process.env.TELEGRAM_TOKEN;
 
-if (!TELEGRAM_TOKEN) {
+if (!TOKEN) {
   console.error("❌ TELEGRAM_TOKEN не найден");
   process.exit(1);
 }
 
-if (!ANTHROPIC_KEY) {
-  console.error("❌ ANTHROPIC_API_KEY не найден");
-  process.exit(1);
-}
+// ===== СОЗДАНИЕ БОТА =====
+const bot = new TelegramBot(TOKEN, {
+  polling: {
+    interval: 300,
+    autoStart: true,
+  },
+});
 
-// ===== EXPRESS =====
-const app = express();
-app.use(express.json());
+console.log("🚀 Real Invest PRO бот запущен");
 
-// ===== TELEGRAM BOT (БЕЗ polling) =====
-const bot = new TelegramBot(TELEGRAM_TOKEN);
-
-// ===== WEBHOOK URL =====
-const WEBHOOK_URL = `https://${process.env.RAILWAY_STATIC_URL}/bot${TELEGRAM_TOKEN}`;
-
-bot.setWebHook(WEBHOOK_URL);
-
-// ===== ANTHROPIC =====
-const client = new Anthropic({ apiKey: ANTHROPIC_KEY });
-
-// ===== СИСТЕМНЫЙ ПРОМПТ =====
-const SYSTEM_PROMPT = `
-Ты — вежливый помощник агентства недвижимости Real Invest в Приднестровье.
-
-Твои задачи:
-- Помогать купить, продать, снять или сдать недвижимость
-- Отвечать кратко (до 4 предложений)
-- Всегда отвечать на русском языке
-- Если клиент готов — попросить номер телефона
-`;
-
-const users = {};
-const conversations = {};
-
-function getHistory(chatId) {
-  if (!conversations[chatId]) conversations[chatId] = [];
-  return conversations[chatId];
-}
-
-function addToHistory(chatId, role, content) {
-  const history = getHistory(chatId);
-  history.push({ role, content });
-  if (history.length > 20) {
-    history.splice(0, history.length - 20);
-  }
-}
-
-// ===== КНОПКИ =====
+// ===== КЛАВИАТУРА =====
 const keyboard = {
   reply_markup: {
     keyboard: [
       ["🏠 Купить недвижимость", "🏷 Продать недвижимость"],
       ["🏢 Сдать недвижимость", "🔑 Снять недвижимость"],
-      ["📄 Документы", "📞 Связаться с менеджером"]
+      ["📞 Связаться"],
     ],
-    resize_keyboard: true
-  }
+    resize_keyboard: true,
+  },
 };
 
-// ===== WEBHOOK ОБРАБОТЧИК =====
-app.post(`/bot${TELEGRAM_TOKEN}`, async (req, res) => {
-  const msg = req.body.message;
-  if (!msg || !msg.text) {
-    res.sendStatus(200);
-    return;
-  }
+// ===== START =====
+bot.onText(/\/start/, (msg) => {
+  bot.sendMessage(
+    msg.chat.id,
+    "Здравствуйте 👋\n\nЯ помощник агентства Real Invest.\nПомогу купить, продать, сдать или снять недвижимость.\n\nВыберите действие:",
+    keyboard
+  );
+});
 
-  const chatId = msg.chat.id;
-  const text = msg.text;
-
+// ===== ОБРАБОТКА СООБЩЕНИЙ =====
+bot.on("message", async (msg) => {
   try {
-    // /start
-    if (text === "/start") {
-      users[chatId] = {};
-      conversations[chatId] = [];
+    const chatId = msg.chat.id;
+    const text = msg.text;
 
-      await bot.sendMessage(
+    if (!text) return;
+
+    // Игнорируем /start (уже обработан)
+    if (text === "/start") return;
+
+    // ===== КУПИТЬ =====
+    if (text === "🏠 Купить недвижимость") {
+      return bot.sendMessage(
         chatId,
-        "Здравствуйте 👋\n\nЯ помощник агентства Real Invest.\nПомогу купить, продать, сдать или снять недвижимость.\n\nВыберите действие:",
+        "Отлично 👍\n\nНапишите:\n• Город\n• Бюджет\n• Количество комнат\n\nНаш менеджер свяжется с вами.",
         keyboard
       );
-
-      res.sendStatus(200);
-      return;
     }
 
-    // Кнопки
-    if (
-      text === "🏠 Купить недвижимость" ||
-      text === "🏷 Продать недвижимость" ||
-      text === "🏢 Сдать недвижимость" ||
-      text === "🔑 Снять недвижимость"
-    ) {
-      users[chatId] = { type: text };
-
-      await bot.sendMessage(
+    // ===== ПРОДАТЬ =====
+    if (text === "🏷 Продать недвижимость") {
+      return bot.sendMessage(
         chatId,
-        "Пожалуйста укажите район, бюджет и количество комнат.\nПосле этого напишите номер телефона.",
+        "Отправьте:\n• Адрес объекта\n• Фото\n• Желаемую цену\n\nМы поможем продать быстро и выгодно.",
         keyboard
       );
-
-      res.sendStatus(200);
-      return;
     }
 
-    if (text === "📄 Документы") {
-      await bot.sendMessage(
+    // ===== СДАТЬ =====
+    if (text === "🏢 Сдать недвижимость") {
+      return bot.sendMessage(
         chatId,
-        "Для сделки необходимы:\n• Паспорт\n• Правоустанавливающие документы\n• Техпаспорт\n\nПодробности можно уточнить у менеджера.",
+        "Отправьте:\n• Адрес\n• Фото\n• Цена аренды\n\nПодберем арендатора.",
         keyboard
       );
-
-      res.sendStatus(200);
-      return;
     }
 
-    if (text === "📞 Связаться с менеджером") {
-      await bot.sendMessage(
+    // ===== СНЯТЬ =====
+    if (text === "🔑 Снять недвижимость") {
+      return bot.sendMessage(
         chatId,
-        "Пожалуйста, напишите ваш номер телефона.",
+        "Напишите:\n• Город\n• Бюджет\n• Срок аренды\n\nПодберем варианты.",
         keyboard
       );
-
-      res.sendStatus(200);
-      return;
     }
 
-    // Телефон
-    if (/^\+?\d[\d\s\-]{5,}$/.test(text)) {
-      await bot.sendMessage(
-        ADMIN_ID,
-        `📥 Новая заявка\n\nТип: ${users[chatId]?.type || "Не указан"}\nИмя: ${msg.from.first_name}\nUsername: ${msg.from.username || "нет"}\nТелефон: ${text}`
-      );
-
-      await bot.sendMessage(
+    // ===== СВЯЗАТЬСЯ =====
+    if (text === "📞 Связаться") {
+      return bot.sendMessage(
         chatId,
-        "✅ Спасибо! Менеджер свяжется с вами в ближайшее время.",
+        "Связаться с нами:\n📱 +373 777 72 4 73\n\nReal Invest — работаем по всей ПМР 🇲🇩",
         keyboard
       );
-
-      res.sendStatus(200);
-      return;
     }
 
-    // ===== Claude ответ =====
-    addToHistory(chatId, "user", text);
-
-    const response = await client.messages.create({
-      model: "claude-3-5-sonnet-20241022",
-      max_tokens: 300,
-      system: SYSTEM_PROMPT,
-      messages: getHistory(chatId).map(m => ({
-        role: m.role,
-        content: [{ type: "text", text: m.content }]
-      }))
-    });
-
-    const reply = response.content[0]?.text || "Попробуйте ещё раз.";
-
-    addToHistory(chatId, "assistant", reply);
-
-    await bot.sendMessage(chatId, reply, keyboard);
-
-    res.sendStatus(200);
+    // ===== ПО УМОЛЧАНИЮ =====
+    return bot.sendMessage(
+      chatId,
+      "Пожалуйста, выберите действие из меню 👇",
+      keyboard
+    );
 
   } catch (error) {
     console.error("Ошибка:", error);
-    res.sendStatus(200);
   }
-});
-
-// ===== ЗАПУСК СЕРВЕРА =====
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-  console.log("🚀 Real Invest WEBHOOK бот запущен");
 });
