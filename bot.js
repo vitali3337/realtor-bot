@@ -5,32 +5,33 @@ const Anthropic = require("@anthropic-ai/sdk");
 // ===== КОНФИГУРАЦИЯ =====
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const ANTHROPIC_KEY  = process.env.ANTHROPIC_API_KEY;
-const ADMIN_ID       = -1003773163201;
+const ADMIN_ID       = "-1003773163201"; // твоя группа
 
-if (!TELEGRAM_TOKEN) { console.error("TELEGRAM_TOKEN не найден"); process.exit(1); }
-if (!ANTHROPIC_KEY)  { console.error("ANTHROPIC_API_KEY не найден"); process.exit(1); }
+if (!TELEGRAM_TOKEN) { console.error("❌ TELEGRAM_TOKEN не найден"); process.exit(1); }
+if (!ANTHROPIC_KEY)  { console.error("❌ ANTHROPIC_API_KEY не найден"); process.exit(1); }
 
 const bot    = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 const client = new Anthropic({ apiKey: ANTHROPIC_KEY });
 
 // ===== СИСТЕМНЫЙ ПРОМПТ =====
-const SYSTEM_PROMPT = `Ты — вежливый помощник агентства недвижимости. Общаешься с клиентами в Telegram.
+const SYSTEM_PROMPT = `
+Ты — вежливый помощник агентства недвижимости Real Invest в Приднестровье.
 
 Твои задачи:
-- Помогать клиентам купить, продать, снять или сдать недвижимость
-- Отвечать на вопросы о сделках, документах, ипотеке
-- Рассчитывать ипотечные платежи если спрашивают
-- Собирать контактные данные (телефон) для передачи менеджеру
+- Помогать купить, продать, снять или сдать недвижимость
+- Отвечать на вопросы о сделках и документах
+- Рассчитывать ипотеку если просят
+- Если клиент готов — попросить номер телефона
 
 Правила:
-- Отвечай коротко, максимум 3-4 предложения
+- Отвечай коротко (до 4 предложений)
 - Используй эмодзи умеренно
-- Если клиент готов к сотрудничеству — попроси номер телефона
-- Если вопрос юридический — скажи что менеджер проконсультирует
-- Отвечай только на русском языке`;
+- Всегда отвечай на русском языке
+- Если вопрос сложный юридический — предложи консультацию менеджера
+`;
 
 // ===== ХРАНИЛИЩЕ =====
-const users         = {};
+const users = {};
 const conversations = {};
 
 function getHistory(chatId) {
@@ -39,9 +40,11 @@ function getHistory(chatId) {
 }
 
 function addToHistory(chatId, role, content) {
-  const h = getHistory(chatId);
-  h.push({ role, content });
-  if (h.length > 20) h.splice(0, h.length - 20);
+  const history = getHistory(chatId);
+  history.push({ role, content });
+  if (history.length > 20) {
+    history.splice(0, history.length - 20);
+  }
 }
 
 // ===== КНОПКИ =====
@@ -50,8 +53,7 @@ const keyboard = {
     keyboard: [
       ["🏠 Купить недвижимость", "🏷 Продать недвижимость"],
       ["🏢 Сдать недвижимость",  "🔑 Снять недвижимость"],
-      ["🏦 Рассчитать ипотеку",  "📄 Документы"],
-      ["📞 Связаться с менеджером"]
+      ["📄 Документы", "📞 Связаться с менеджером"]
     ],
     resize_keyboard: true
   }
@@ -60,34 +62,39 @@ const keyboard = {
 // ===== CLAUDE =====
 async function askClaude(chatId, userMessage) {
   addToHistory(chatId, "user", userMessage);
+
+  const formattedMessages = getHistory(chatId).map(m => ({
+    role: m.role,
+    content: [{ type: "text", text: m.content }]
+  }));
+
   const response = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 512,
+    model: "claude-3-5-sonnet-20241022",
+    max_tokens: 500,
     system: SYSTEM_PROMPT,
-    messages: getHistory(chatId),
+    messages: formattedMessages,
   });
+
   const reply = response.content[0]?.text || "Нет ответа.";
   addToHistory(chatId, "assistant", reply);
+
   return reply;
 }
 
-// ===== ЗАЯВКА В ГРУППУ =====
+// ===== ОТПРАВКА ЗАЯВКИ =====
 async function sendLead(msg, phone) {
   const u = users[msg.chat.id] || {};
-  try {
-    await bot.sendMessage(
-      ADMIN_ID,
-      `📥 Новая заявка!\n\n` +
-      `📌 Тип: ${u.type || "Не указан"}\n` +
-      `👤 Имя: ${msg.from.first_name || "—"}\n` +
-      `📎 Username: @${msg.from.username || "нет"}\n` +
-      `🆔 ID: ${msg.from.id}\n` +
-      `📱 Телефон: ${phone}\n` +
-      (u.info ? `📝 Детали: ${u.info}` : "")
-    );
-  } catch (e) {
-    console.error("Ошибка отправки в группу:", e.message);
-  }
+
+  await bot.sendMessage(
+    ADMIN_ID,
+    `📥 Новая заявка!\n\n` +
+    `📌 Тип: ${u.type || "Не указан"}\n` +
+    `👤 Имя: ${msg.from.first_name || "—"}\n` +
+    `📎 Username: ${msg.from.username ? "@" + msg.from.username : "нет"}\n` +
+    `🆔 ID: ${msg.from.id}\n` +
+    `📱 Телефон: ${phone}\n` +
+    (u.info ? `📝 Детали: ${u.info}` : "")
+  );
 }
 
 // ===== /start =====
@@ -95,12 +102,13 @@ bot.onText(/\/start/, (msg) => {
   const name = msg.from.first_name || "";
   users[msg.chat.id] = {};
   conversations[msg.chat.id] = [];
+
   bot.sendMessage(
     msg.chat.id,
-    `Здравствуйте${name ? ", " + name : ""}!\n\n` +
-    `Я помощник агентства недвижимости 🏠\n` +
-    `Помогу купить, продать, снять или сдать объект.\n\n` +
-    `Выберите действие или задайте любой вопрос:`,
+    `Здравствуйте${name ? ", " + name : ""}! 👋\n\n` +
+    `Я помощник агентства Real Invest 🏠\n` +
+    `Помогу купить, продать, сдать или снять недвижимость.\n\n` +
+    `Выберите действие или задайте вопрос:`,
     keyboard
   );
 });
@@ -109,70 +117,78 @@ bot.onText(/\/start/, (msg) => {
 bot.onText(/\/clear/, (msg) => {
   users[msg.chat.id] = {};
   conversations[msg.chat.id] = [];
-  bot.sendMessage(msg.chat.id, "Начнём сначала!", keyboard);
+  bot.sendMessage(msg.chat.id, "Начинаем заново 👍", keyboard);
 });
 
 // ===== ОСНОВНОЙ ОБРАБОТЧИК =====
 bot.on("message", async (msg) => {
+  if (msg.chat.type !== "private") return;
+
   const chatId = msg.chat.id;
-  const text   = msg.text;
+  const text = msg.text;
   if (!text || text.startsWith("/")) return;
 
   const quickActions = {
-    "🏠 Купить недвижимость":    { type: "ПОКУПКА",   prompt: "Клиент хочет купить недвижимость. Спроси район, бюджет и количество комнат. Коротко и дружелюбно." },
-    "🏷 Продать недвижимость":   { type: "ПРОДАЖА",   prompt: "Клиент хочет продать недвижимость. Спроси район, площадь, этаж и желаемую цену. Коротко." },
-    "🏢 Сдать недвижимость":     { type: "СДАЧА",     prompt: "Клиент хочет сдать недвижимость. Спроси район, количество комнат и желаемую аренду. Коротко." },
-    "🔑 Снять недвижимость":     { type: "АРЕНДА",    prompt: "Клиент хочет снять недвижимость. Спроси район, бюджет в месяц и количество комнат. Коротко." },
-    "🏦 Рассчитать ипотеку":     { type: "ИПОТЕКА",   prompt: "Клиент хочет рассчитать ипотеку. Спроси стоимость объекта, первоначальный взнос и срок кредита. Коротко." },
-    "📄 Документы":              { type: "ДОКУМЕНТЫ", prompt: "Клиент спрашивает про документы для сделки с недвижимостью. Расскажи кратко что нужно при покупке/продаже." },
-    "📞 Связаться с менеджером": { type: "СВЯЗЬ",     prompt: "Клиент хочет связаться с менеджером. Попроси номер телефона вежливо." },
+    "🏠 Купить недвижимость": "Клиент хочет купить недвижимость. Спроси район, бюджет и количество комнат.",
+    "🏷 Продать недвижимость": "Клиент хочет продать недвижимость. Спроси район, площадь и желаемую цену.",
+    "🏢 Сдать недвижимость": "Клиент хочет сдать недвижимость. Спроси район, количество комнат и цену аренды.",
+    "🔑 Снять недвижимость": "Клиент хочет снять недвижимость. Спроси район, бюджет и количество комнат.",
+    "📄 Документы": "Расскажи кратко какие документы нужны для покупки и продажи недвижимости в ПМР.",
+    "📞 Связаться с менеджером": "Клиент хочет связаться с менеджером. Попроси номер телефона."
   };
 
+  // Быстрые кнопки
   if (quickActions[text]) {
-    const action = quickActions[text];
-    users[chatId] = { type: action.type };
+    users[chatId] = { type: text };
     try {
       bot.sendChatAction(chatId, "typing");
-      const reply = await askClaude(chatId, action.prompt);
+      const reply = await askClaude(chatId, quickActions[text]);
       return bot.sendMessage(chatId, reply, keyboard);
     } catch (e) {
       console.error(e);
-      return bot.sendMessage(chatId, "Произошла ошибка. Попробуйте ещё раз.", keyboard);
+      return bot.sendMessage(chatId, "Ошибка. Попробуйте ещё раз.", keyboard);
     }
   }
 
-  // Номер телефона — отправляем заявку
+  // Если отправили телефон
   if (/^\+?\d[\d\s\-]{5,}$/.test(text)) {
     try {
-      const history = getHistory(chatId);
-      const infoLines = history
+      const history = getHistory(chatId)
         .filter(m => m.role === "user")
         .map(m => m.content)
         .slice(-4)
         .join(" | ");
-      if (users[chatId]) users[chatId].info = infoLines;
+
+      if (users[chatId]) users[chatId].info = history;
 
       await sendLead(msg, text);
+
       delete users[chatId];
       conversations[chatId] = [];
 
       return bot.sendMessage(
         chatId,
-        "✅ Спасибо! Менеджер свяжется с вами в ближайшее время.\n\nЕсли появятся вопросы — пишите!",
+        "✅ Спасибо! Менеджер свяжется с вами в ближайшее время.",
         keyboard
       );
     } catch (e) {
       console.error(e);
-      return bot.sendMessage(chatId, "Произошла ошибка. Попробуйте ещё раз.", keyboard);
+      return bot.sendMessage(chatId, "Ошибка отправки заявки.", keyboard);
     }
   }
 
-  // Любой текст — отвечает Claude
+  // Любой другой текст — отвечает Claude
   try {
     bot.sendChatAction(chatId, "typing");
-    const typingInterval = setInterval(() => bot.sendChatAction(chatId, "typing"), 4000);
+
+    const typingInterval = setInterval(() => {
+      bot.sendChatAction(chatId, "typing");
+    }, 4000);
+
     const reply = await askClaude(chatId, text);
+
     clearInterval(typingInterval);
+
     return bot.sendMessage(chatId, reply, keyboard);
   } catch (e) {
     console.error("Ошибка Claude:", e.message);
@@ -180,4 +196,4 @@ bot.on("message", async (msg) => {
   }
 });
 
-console.log("Realtor BOT с Claude AI запущен!");
+console.log("🚀 Real Invest BOT с Claude запущен!");
