@@ -2,41 +2,17 @@ require("dotenv").config();
 const TelegramBot = require("node-telegram-bot-api");
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const ADMIN_ID = -1003773163201; // Группа заявок
+const ADMIN_ID = -1003773163201; // группа заявок
 
 if (!TELEGRAM_TOKEN) {
   console.error("❌ TELEGRAM_TOKEN не найден");
   process.exit(1);
 }
 
-const bot = new TelegramBot(TELEGRAM_TOKEN, {
-  polling: {
-    interval: 300,
-    autoStart: true,
-    params: { timeout: 10 }
-  }
-});
+const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
-// ===============================
-// 💰 ИПОТЕЧНЫЙ РАСЧЁТ
-// ===============================
-function calculateMortgage(price) {
-  const downPayment = price * 0.3;
-  const loan = price - downPayment;
-  const rate = 0.10 / 12;
-  const months = 10 * 12;
-
-  const monthly =
-    loan *
-    (rate * Math.pow(1 + rate, months)) /
-    (Math.pow(1 + rate, months) - 1);
-
-  return {
-    downPayment: Math.round(downPayment),
-    loan: Math.round(loan),
-    monthly: Math.round(monthly),
-  };
-}
+// ===== ХРАНЕНИЕ СОСТОЯНИЯ =====
+const users = {};
 
 // ===============================
 // 🎛 КНОПКИ
@@ -44,9 +20,9 @@ function calculateMortgage(price) {
 const keyboard = {
   reply_markup: {
     keyboard: [
-      ["🏠 Хочу купить квартиру", "🔑 Хочу снять квартиру"],
-      ["💰 Рассчитать ипотеку", "📄 Вопрос по документам"],
-      ["📞 Записаться на просмотр"]
+      ["🏠 Купить недвижимость", "🏷 Продать недвижимость"],
+      ["🏢 Сдать недвижимость", "🔑 Снять недвижимость"],
+      ["📄 Документы", "📞 Связаться"]
     ],
     resize_keyboard: true
   }
@@ -58,7 +34,7 @@ const keyboard = {
 bot.onText(/\/start/, (msg) => {
   bot.sendMessage(
     msg.chat.id,
-    "👋 Добро пожаловать!\nЯ помогу вам с покупкой или арендой недвижимости в ПМР.",
+    "👋 Добро пожаловать!\nВыберите действие 👇",
     keyboard
   );
 });
@@ -76,65 +52,72 @@ bot.on("message", async (msg) => {
 
   try {
 
-    // ===== ПОКУПКА =====
-    if (text === "🏠 Хочу купить квартиру") {
-      return bot.sendMessage(
-        chatId,
-        "🏠 Отлично!\n\nНапишите:\n1️⃣ Район\n2️⃣ Бюджет в $\n3️⃣ Количество комнат\n4️⃣ Нужна ли ипотека?",
+    // ===== ВЫБОР ДЕЙСТВИЯ =====
+    if (text === "🏠 Купить недвижимость") {
+      users[chatId] = { type: "ПОКУПКА" };
+      return bot.sendMessage(chatId,
+        "🏠 Укажите:\n📍 Район\n💵 Бюджет\n🛏 Количество комнат\n\nПосле этого напишите номер телефона.",
         keyboard
       );
     }
 
-    // ===== АРЕНДА =====
-    if (text === "🔑 Хочу снять квартиру") {
-      return bot.sendMessage(
-        chatId,
-        "🔑 Поможем подобрать аренду.\n\nУкажите:\n1️⃣ Район\n2️⃣ Бюджет в $\n3️⃣ Количество комнат\n4️⃣ Когда нужно заехать?",
+    if (text === "🏷 Продать недвижимость") {
+      users[chatId] = { type: "ПРОДАЖА" };
+      return bot.sendMessage(chatId,
+        "🏷 Укажите:\n📍 Район\n📐 Площадь\n🏢 Этаж\n💰 Желаемую цену\n\nПосле этого напишите номер телефона.",
         keyboard
       );
     }
 
-    // ===== ДОКУМЕНТЫ =====
-    if (text === "📄 Вопрос по документам") {
-      return bot.sendMessage(
-        chatId,
-        "📄 Сделка в ПМР проходит так:\n\n" +
-        "✔️ Договор купли-продажи\n" +
-        "✔️ Регистрация в регистрационной палате\n" +
-        "✔️ Новый техпаспорт выдается в течение 5 рабочих дней",
+    if (text === "🏢 Сдать недвижимость") {
+      users[chatId] = { type: "СДАЧА" };
+      return bot.sendMessage(chatId,
+        "🏢 Укажите:\n📍 Район\n🛏 Комнат\n💵 Желаемую аренду\n\nПосле этого напишите номер телефона.",
         keyboard
       );
     }
 
-    // ===== ПРОСМОТР =====
-    if (text === "📞 Записаться на просмотр") {
-      return bot.sendMessage(
-        chatId,
-        "📞 Напишите ваш номер телефона — и менеджер свяжется с вами.",
+    if (text === "🔑 Снять недвижимость") {
+      users[chatId] = { type: "АРЕНДА" };
+      return bot.sendMessage(chatId,
+        "🔑 Укажите:\n📍 Район\n💵 Бюджет\n🛏 Количество комнат\n\nПосле этого напишите номер телефона.",
         keyboard
       );
     }
 
-    // ===== ИПОТЕКА =====
-    if (text === "💰 Рассчитать ипотеку") {
+    if (text === "📄 Документы") {
       return bot.sendMessage(
         chatId,
-        "Введите стоимость недвижимости в долларах.\nНапример: 50000",
+        "📄 Сделка проходит так:\n\n✔️ Договор купли-продажи\n✔️ Регистрация в палате\n✔️ Новый техпаспорт — 5 рабочих дней",
         keyboard
       );
     }
 
-    // ===== ЕСЛИ ВВЕДЕН НОМЕР ТЕЛЕФОНА =====
+    if (text === "📞 Связаться") {
+      users[chatId] = { type: "СВЯЗЬ" };
+      return bot.sendMessage(
+        chatId,
+        "📞 Напишите номер телефона — и менеджер свяжется с вами.",
+        keyboard
+      );
+    }
+
+    // ===== ЕСЛИ ВВЕДЕН НОМЕР =====
     if (/^\+?\d[\d\s]{5,}$/.test(text)) {
+
+      const userType = users[chatId]?.type || "НЕ УКАЗАНО";
 
       await bot.sendMessage(
         ADMIN_ID,
         `📥 Новая заявка!\n\n` +
+        `📌 Тип: ${userType}\n` +
         `👤 Имя: ${msg.from.first_name}\n` +
         `📎 Username: @${msg.from.username || "нет"}\n` +
         `🆔 Telegram ID: ${msg.from.id}\n` +
         `📱 Телефон: ${text}`
       );
+
+      delete users[chatId];
 
       return bot.sendMessage(
         chatId,
@@ -143,33 +126,9 @@ bot.on("message", async (msg) => {
       );
     }
 
-    // ===== ЕСЛИ ВВЕДЕНО ЧИСЛО (ИПОТЕКА) =====
-    if (/^\d+$/.test(text)) {
-
-      const price = parseInt(text);
-
-      if (price >= 10000) {
-
-        const calc = calculateMortgage(price);
-
-        return bot.sendMessage(
-          chatId,
-          `📊 Расчёт ипотеки в ПМР:\n\n` +
-          `💵 Стоимость: ${price}$\n` +
-          `💰 Первый взнос (30%): ${calc.downPayment}$\n` +
-          `🏦 Сумма кредита: ${calc.loan}$\n` +
-          `📆 Срок: 10 лет\n` +
-          `📈 Ставка: 10%\n\n` +
-          `💳 Ежемесячный платёж: ~ ${calc.monthly}$`,
-          keyboard
-        );
-      }
-    }
-
-    // ===== ПО УМОЛЧАНИЮ =====
     return bot.sendMessage(
       chatId,
-      "Пожалуйста, выберите действие из меню ниже 👇",
+      "Пожалуйста, выберите действие из меню 👇",
       keyboard
     );
 
