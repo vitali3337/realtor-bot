@@ -1,37 +1,37 @@
 require("dotenv").config();
 const TelegramBot = require("node-telegram-bot-api");
+const Anthropic = require("@anthropic-ai/sdk");
 
-// ===== ПРОВЕРКА ТОКЕНА =====
-const TOKEN = process.env.TELEGRAM_TOKEN;
+const token = process.env.TELEGRAM_TOKEN;
+const anthropicKey = process.env.ANTHROPIC_API_KEY;
 
-if (!TOKEN) {
+if (!token) {
   console.error("❌ TELEGRAM_TOKEN не найден");
   process.exit(1);
 }
 
-// ===== СОЗДАНИЕ БОТА =====
-const bot = new TelegramBot(TOKEN, {
-  polling: {
-    interval: 300,
-    autoStart: true,
-  },
+if (!anthropicKey) {
+  console.error("❌ ANTHROPIC_API_KEY не найден");
+  process.exit(1);
+}
+
+const bot = new TelegramBot(token, { polling: true });
+
+const anthropic = new Anthropic({
+  apiKey: anthropicKey,
 });
 
-console.log("🚀 Real Invest PRO бот запущен");
-
-// ===== КЛАВИАТУРА =====
 const keyboard = {
   reply_markup: {
     keyboard: [
       ["🏠 Купить недвижимость", "🏷 Продать недвижимость"],
       ["🏢 Сдать недвижимость", "🔑 Снять недвижимость"],
-      ["📞 Связаться"],
+      ["📄 Документы", "📞 Связаться"]
     ],
     resize_keyboard: true,
   },
 };
 
-// ===== START =====
 bot.onText(/\/start/, (msg) => {
   bot.sendMessage(
     msg.chat.id,
@@ -40,70 +40,36 @@ bot.onText(/\/start/, (msg) => {
   );
 });
 
-// ===== ОБРАБОТКА СООБЩЕНИЙ =====
 bot.on("message", async (msg) => {
+  if (msg.text.startsWith("/")) return;
+
+  const userText = msg.text;
+
   try {
-    const chatId = msg.chat.id;
-    const text = msg.text;
+    const response = await anthropic.messages.create({
+      model: "claude-3-haiku-20240307",
+      max_tokens: 500,
+      messages: [
+        {
+          role: "user",
+          content: `Ты менеджер агентства недвижимости Real Invest в Приднестровье.
+Отвечай кратко, профессионально и по делу.
+Если клиент хочет купить — уточни бюджет, район и тип жилья.
+Если продать — уточни город, тип объекта и цену.
+Не пиши длинные тексты.
 
-    if (!text) return;
+Запрос клиента:
+${userText}`
+        }
+      ]
+    });
 
-    // Игнорируем /start (уже обработан)
-    if (text === "/start") return;
+    const reply = response.content[0].text;
 
-    // ===== КУПИТЬ =====
-    if (text === "🏠 Купить недвижимость") {
-      return bot.sendMessage(
-        chatId,
-        "Отлично 👍\n\nНапишите:\n• Город\n• Бюджет\n• Количество комнат\n\nНаш менеджер свяжется с вами.",
-        keyboard
-      );
-    }
-
-    // ===== ПРОДАТЬ =====
-    if (text === "🏷 Продать недвижимость") {
-      return bot.sendMessage(
-        chatId,
-        "Отправьте:\n• Адрес объекта\n• Фото\n• Желаемую цену\n\nМы поможем продать быстро и выгодно.",
-        keyboard
-      );
-    }
-
-    // ===== СДАТЬ =====
-    if (text === "🏢 Сдать недвижимость") {
-      return bot.sendMessage(
-        chatId,
-        "Отправьте:\n• Адрес\n• Фото\n• Цена аренды\n\nПодберем арендатора.",
-        keyboard
-      );
-    }
-
-    // ===== СНЯТЬ =====
-    if (text === "🔑 Снять недвижимость") {
-      return bot.sendMessage(
-        chatId,
-        "Напишите:\n• Город\n• Бюджет\n• Срок аренды\n\nПодберем варианты.",
-        keyboard
-      );
-    }
-
-    // ===== СВЯЗАТЬСЯ =====
-    if (text === "📞 Связаться") {
-      return bot.sendMessage(
-        chatId,
-        "Связаться с нами:\n📱 +373 777 72 4 73\n\nReal Invest — работаем по всей ПМР 🇲🇩",
-        keyboard
-      );
-    }
-
-    // ===== ПО УМОЛЧАНИЮ =====
-    return bot.sendMessage(
-      chatId,
-      "Пожалуйста, выберите действие из меню 👇",
-      keyboard
-    );
+    bot.sendMessage(msg.chat.id, reply, keyboard);
 
   } catch (error) {
-    console.error("Ошибка:", error);
+    console.error(error);
+    bot.sendMessage(msg.chat.id, "Ошибка обработки запроса. Попробуйте ещё раз.");
   }
 });
