@@ -1,5 +1,5 @@
-require('dotenv').config();
-const TelegramBot = require('node-telegram-bot-api');
+require("dotenv").config();
+const TelegramBot = require("node-telegram-bot-api");
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 
@@ -8,12 +8,7 @@ if (!TELEGRAM_TOKEN) {
   process.exit(1);
 }
 
-const bot = new TelegramBot(TELEGRAM_TOKEN, {
-  polling: {
-    interval: 300,
-    autoStart: true
-  }
-});
+const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
 // ===============================
 // 💰 ИПОТЕЧНЫЙ РАСЧЁТ
@@ -47,7 +42,7 @@ const keyboard = {
       ["📞 Записаться на просмотр"]
     ],
     resize_keyboard: true,
-    one_time_keyboard: false
+    persistent: true
   }
 };
 
@@ -63,15 +58,13 @@ bot.onText(/\/start/, (msg) => {
 });
 
 // ===============================
-// 💬 ОБРАБОТКА
+// 💬 ОБРАБОТКА СООБЩЕНИЙ
 // ===============================
 bot.on("message", async (msg) => {
-  if (!msg.text) return;
-
-  const text = msg.text.trim();
   const chatId = msg.chat.id;
+  const text = msg.text;
 
-  // Игнорируем команды
+  if (!text) return;
   if (text.startsWith("/")) return;
 
   try {
@@ -112,7 +105,7 @@ bot.on("message", async (msg) => {
       );
     }
 
-    // ===== ИПОТЕКА КНОПКА =====
+    // ===== ИПОТЕКА =====
     if (text === "💰 Рассчитать ипотеку") {
       return bot.sendMessage(
         chatId,
@@ -121,7 +114,7 @@ bot.on("message", async (msg) => {
       );
     }
 
-    // ===== ЕСЛИ ВВЕЛИ ЧИСЛО =====
+    // ===== ЕСЛИ ВВЕДЕНО ЧИСЛО =====
     if (/^\d+$/.test(text)) {
       const price = parseInt(text);
 
@@ -151,7 +144,11 @@ bot.on("message", async (msg) => {
 
   } catch (error) {
     console.error("Ошибка:", error);
-    bot.sendMessage(chatId, "⚠ Произошла техническая ошибка. Попробуйте позже.");
+    return bot.sendMessage(
+      chatId,
+      "⚠ Произошла техническая ошибка. Попробуйте позже.",
+      keyboard
+    );
   }
 });
 
