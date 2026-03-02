@@ -2,14 +2,20 @@ require("dotenv").config();
 const TelegramBot = require("node-telegram-bot-api");
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const ADMIN_ID = 5705817827;
+const ADMIN_ID = -1003773163201; // Группа заявок
 
 if (!TELEGRAM_TOKEN) {
   console.error("❌ TELEGRAM_TOKEN не найден");
   process.exit(1);
 }
 
-const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
+const bot = new TelegramBot(TELEGRAM_TOKEN, {
+  polling: {
+    interval: 300,
+    autoStart: true,
+    params: { timeout: 10 }
+  }
+});
 
 // ===============================
 // 💰 ИПОТЕЧНЫЙ РАСЧЁТ
@@ -58,7 +64,7 @@ bot.onText(/\/start/, (msg) => {
 });
 
 // ===============================
-// 💬 ОБРАБОТКА СООБЩЕНИЙ
+// 💬 ОБРАБОТКА
 // ===============================
 bot.on("message", async (msg) => {
 
@@ -123,7 +129,7 @@ bot.on("message", async (msg) => {
 
       await bot.sendMessage(
         ADMIN_ID,
-        `📞 Новая заявка!\n\n` +
+        `📥 Новая заявка!\n\n` +
         `👤 Имя: ${msg.from.first_name}\n` +
         `📎 Username: @${msg.from.username || "нет"}\n` +
         `🆔 Telegram ID: ${msg.from.id}\n` +
