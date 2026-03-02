@@ -32,6 +32,18 @@ const keyboard = {
   },
 };
 
+const SYSTEM_PROMPT = `
+Ты — профессиональный менеджер агентства недвижимости Real Invest в Приднестровье.
+
+Твоя задача — продать услугу и перевести клиента в контакт.
+
+Правила:
+- Уточняй город, бюджет и тип жилья.
+- Отвечай кратко и по делу.
+- Не пиши длинные тексты.
+- Всегда отвечай на русском языке.
+`;
+
 bot.onText(/\/start/, (msg) => {
   bot.sendMessage(
     msg.chat.id,
@@ -41,7 +53,7 @@ bot.onText(/\/start/, (msg) => {
 });
 
 bot.on("message", async (msg) => {
-  if (msg.text.startsWith("/")) return;
+  if (!msg.text || msg.text.startsWith("/")) return;
 
   const userText = msg.text;
 
@@ -49,27 +61,21 @@ bot.on("message", async (msg) => {
     const response = await anthropic.messages.create({
       model: "claude-3-haiku-20240307",
       max_tokens: 500,
+      system: SYSTEM_PROMPT,
       messages: [
         {
           role: "user",
-          content: `Ты менеджер агентства недвижимости Real Invest в Приднестровье.
-Отвечай кратко, профессионально и по делу.
-Если клиент хочет купить — уточни бюджет, район и тип жилья.
-Если продать — уточни город, тип объекта и цену.
-Не пиши длинные тексты.
-
-Запрос клиента:
-${userText}`
+          content: userText
         }
       ]
     });
 
     const reply = response.content[0].text;
 
-    bot.sendMessage(msg.chat.id, reply, keyboard);
+    await bot.sendMessage(msg.chat.id, reply, keyboard);
 
   } catch (error) {
-    console.error(error);
-    bot.sendMessage(msg.chat.id, "Ошибка обработки запроса. Попробуйте ещё раз.");
+    console.error("❌ Ошибка Claude:", error.message);
+    await bot.sendMessage(msg.chat.id, "Ошибка обработки запроса. Попробуйте ещё раз.");
   }
 });
