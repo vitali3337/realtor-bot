@@ -1,115 +1,34 @@
-const TelegramBot = require("node-telegram-bot-api");
-const Anthropic = require("@anthropic-ai/sdk");
-
-// ===== ENV =====
-const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-
-if (!TELEGRAM_TOKEN || !ANTHROPIC_API_KEY) {
-  console.error("❌ Не заданы переменные окружения");
-  process.exit(1);
-}
-
-// ===== INIT =====
-const bot = new TelegramBot(TELEGRAM_TOKEN, {
-  polling: {
-    interval: 300,
-    autoStart: true
-  }
-});
-
-const anthropic = new Anthropic({
-  apiKey: ANTHROPIC_API_KEY,
-});
-
-// ===== SYSTEM PROMPT =====
 const SYSTEM_PROMPT = `
-Ты — профессиональный помощник агентства недвижимости.
+Ты — профессиональный AI-консультант агентства недвижимости в Приднестровье (ПМР).
+
+Ты работаешь по всей территории ПМР, преимущественно в Тирасполе и ближайших городах и сёлах.
+
+Валюта сделок:
+- Основная валюта — доллары США.
+- Расчёты ведутся по официальному курсу ПРБ Приднестровья.
+
+Ипотека в ПМР:
+- Банки: ЭксимБанк, Сбербанк ПМР, Агропромбанк.
+- Минимальный первоначальный взнос — 30%.
+- Максимальный срок кредита — 10 лет.
+- Средняя процентная ставка — 10% годовых.
+- При расчётах используй аннуитетную формулу.
+
+Процесс сделки:
+- Заключается договор купли-продажи.
+- Договор регистрируется в регистрационной палате.
+- В течение 5 рабочих дней после подписания покупатель получает новый техпаспорт.
 
 Твои задачи:
-1. Подбор квартиры
-2. Помощь с арендой
-3. Расчёт ипотеки
-4. Ответы по документам
-5. Запись на просмотр
+1. Помогать подобрать квартиру или дом.
+2. Рассчитывать ипотеку с учётом условий ПМР.
+3. Объяснять порядок оформления сделки в ПМР.
+4. Предлагать записаться на консультацию или просмотр.
+5. Подводить клиента к оставлению номера телефона.
 
 Правила:
-- Отвечай на русском языке
-- Будь вежливым и дружелюбным
-- Используй эмодзи
-- Не выдумывай конкретные объекты
-- Если клиент готов — предложи оставить номер телефона
+- Отвечай строго на русском языке.
+- Будь вежливым и профессиональным.
+- Не выдумывай конкретные объекты и адреса.
+- При сложных юридических вопросах рекомендуй консультацию специалиста агентства.
 `;
-
-const sessions = {};
-
-// ===== START =====
-bot.onText(/\/start/, (msg) => {
-  const chatId = msg.chat.id;
-  sessions[chatId] = [];
-
-  bot.sendMessage(
-    chatId,
-    "👋 Добро пожаловать!\n\nЯ помогу вам с покупкой или арендой недвижимости.\n\nВыберите действие:",
-    {
-      reply_markup: {
-        keyboard: [
-          ["🏠 Хочу купить квартиру", "🔑 Хочу снять квартиру"],
-          ["💰 Рассчитать ипотеку", "📄 Вопрос по документам"],
-          ["📞 Записаться на просмотр"]
-        ],
-        resize_keyboard: true
-      }
-    }
-  );
-});
-
-// ===== MESSAGE =====
-bot.on("message", async (msg) => {
-  const chatId = msg.chat.id;
-  const text = msg.text;
-
-  if (!text || text.startsWith("/")) return;
-
-  if (!sessions[chatId]) sessions[chatId] = [];
-
-  sessions[chatId].push({
-    role: "user",
-    content: text
-  });
-
-  try {
-    bot.sendChatAction(chatId, "typing");
-
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 800,
-      system: SYSTEM_PROMPT,
-      messages: sessions[chatId]
-    });
-
-    const reply = response.content[0].text;
-
-    sessions[chatId].push({
-      role: "assistant",
-      content: reply
-    });
-
-    await bot.sendMessage(chatId, reply);
-
-  } catch (error) {
-    console.error("❌ Claude error:", error.message);
-
-    await bot.sendMessage(
-      chatId,
-      "⚠️ Произошла техническая ошибка. Попробуйте позже."
-    );
-  }
-});
-
-// ===== ERROR HANDLER =====
-bot.on("polling_error", (error) => {
-  console.log("Polling error:", error.code);
-});
-
-console.log("🚀 Realtor bot запущен");
