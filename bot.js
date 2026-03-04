@@ -1,109 +1,13 @@
-require("dotenv").config();
-
-const TelegramBot = require("node-telegram-bot-api");
-const Anthropic = require("@anthropic-ai/sdk");
-
-const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
-
-const ADMIN_CHAT_ID = -1003773163201;
-
-if (!TELEGRAM_TOKEN) {
-  console.error("❌ TELEGRAM_TOKEN не найден");
-  process.exit(1);
-}
-
-const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
-
-const anthropic = new Anthropic({
-  apiKey: ANTHROPIC_KEY
-});
-
-console.log("РеалИнвест BOT запущен!");
-
-// память пользователей
-const users = {};
-const conversations = {};
-
-const keyboard = {
-  reply_markup: {
-    keyboard: [
-      ["🏠 Купить недвижимость", "🏷 Продать недвижимость"],
-      ["🏢 Сдать недвижимость", "🔑 Снять недвижимость"],
-      ["🏦 Рассчитать ипотеку", "📄 Документы"],
-      ["📞 Связаться с менеджером"]
-    ],
-    resize_keyboard: true
-  }
-};
-
-// ===== Claude =====
-async function askClaude(chatId, prompt) {
-
-  if (!conversations[chatId]) {
-    conversations[chatId] = [];
-  }
-
-  conversations[chatId].push({
-    role: "user",
-    content: prompt
-  });
-
-  const response = await anthropic.messages.create({
-    model: "claude-3-haiku-20240307",
-    max_tokens: 300,
-    messages: conversations[chatId]
-  });
-
-  const reply = response.content[0].text;
-
-  conversations[chatId].push({
-    role: "assistant",
-    content: reply
-  });
-
-  return reply;
-}
-
-// ===== отправка заявки =====
-async function sendLead(msg, phone) {
-
-  const name = msg.from.first_name || "Без имени";
-  const username = msg.from.username ? "@" + msg.from.username : "нет";
-  const userId = msg.from.id;
-
-  const text =
-`📥 *НОВАЯ ЗАЯВКА — РеалИнвест*
-
-👤 Имя: ${name}
-📎 Username: ${username}
-🆔 Telegram ID: ${userId}
-📱 Телефон: ${phone}
-
-📍 Адрес офиса:
-ул. Восстания 10`;
-
-  try {
-
-    await bot.sendMessage(
-      ADMIN_CHAT_ID,
-      text,
-      { parse_mode: "Markdown" }
+{ parse_mode: "Markdown" }
     );
-
   } catch (e) {
-
     console.error("Ошибка отправки в группу:", e.message);
-
   }
-
 }
 
 // ===== /start =====
 bot.onText(/\/start/, (msg) => {
-
   const name = msg.from.first_name || "";
-
   users[msg.chat.id] = {};
   conversations[msg.chat.id] = [];
 
@@ -114,31 +18,23 @@ bot.onText(/\/start/, (msg) => {
 Добро пожаловать в агентство недвижимости *РеалИнвест* 🏠
 
 Мы поможем вам:
-
 🏠 Купить или продать недвижимость
 🔑 Снять или сдать жильё
 🏦 Рассчитать ипотеку
 
 📍 Адрес: ул. Восстания 10
-📞 Менеджеры:
-• Сергей — 777 26536
-• Александр — 777 72473
-• Виталий — 777 72473
+📞 Менеджеры: 777 26536 / 777 72473
 
-Выберите действие или задайте вопрос 👇`,
+Выберите действие или задайте любой вопрос 👇`,
     { parse_mode: "Markdown", ...keyboard }
   );
-
 });
 
 // ===== /clear =====
 bot.onText(/\/clear/, (msg) => {
-
   users[msg.chat.id] = {};
   conversations[msg.chat.id] = [];
-
-  bot.sendMessage(msg.chat.id, "Начнём сначала 👋", keyboard);
-
+  bot.sendMessage(msg.chat.id, "Начнём сначала! 👋", keyboard);
 });
 
 // ===== ОСНОВНОЙ ОБРАБОТЧИК =====
@@ -158,37 +54,36 @@ bot.on("message", async (msg) => {
 
     "🏷 Продать недвижимость": {
       type: "ПРОДАЖА",
-      prompt: "Клиент хочет продать недвижимость. Спроси район, площадь и желаемую цену. Затем предложи оставить номер телефона."
+      prompt: "Клиент хочет продать недвижимость. Спроси район, площадь, этаж и желаемую цену. Затем предложи оставить номер телефона."
     },
 
     "🏢 Сдать недвижимость": {
       type: "СДАЧА",
-      prompt: "Клиент хочет сдать недвижимость. Спроси район, количество комнат и цену аренды."
+      prompt: "Клиент хочет сдать недвижимость. Спроси район, количество комнат и желаемую аренду. Затем предложи оставить номер телефона."
     },
 
     "🔑 Снять недвижимость": {
       type: "АРЕНДА",
-      prompt: "Клиент хочет снять недвижимость. Спроси район, бюджет в месяц и количество комнат."
+      prompt: "Клиент хочет снять недвижимость. Спроси район, бюджет в месяц и количество комнат. Затем предложи оставить номер телефона."
     },
 
     "🏦 Рассчитать ипотеку": {
       type: "ИПОТЕКА",
-      prompt: "Клиент хочет рассчитать ипотеку. Спроси стоимость объекта, первый взнос и срок кредита."
+      prompt: "Клиент хочет рассчитать ипотеку. Спроси стоимость объекта, первоначальный взнос и срок кредита."
     },
 
     "📄 Документы": {
       type: "ДОКУМЕНТЫ",
-      prompt: "Клиент спрашивает какие документы нужны для сделки недвижимости. Объясни кратко."
+      prompt: "Клиент спрашивает про документы для сделки с недвижимостью. Расскажи кратко что нужно."
     },
 
     "📞 Связаться с менеджером": {
       type: "СВЯЗЬ",
-      prompt: "Клиент хочет связаться с менеджером. Попроси оставить номер телефона."
+      prompt: "Клиент хочет связаться с менеджером. Скажи что менеджеры Сергей (777 26536), Александр и Виталий (777 72473) готовы помочь. Попроси оставить номер телефона."
     }
 
   };
 
-  // быстрые кнопки
   if (quickActions[text]) {
 
     const action = quickActions[text];
@@ -216,7 +111,7 @@ bot.on("message", async (msg) => {
 
   }
 
-  // проверка номера телефона
+  // Номер телефона — отправляем заявку
   if (/^\+?\d[\d\s\-]{5,}$/.test(text)) {
 
     try {
@@ -232,14 +127,14 @@ bot.on("message", async (msg) => {
 
 Наш менеджер свяжется с вами в ближайшее время.
 
-📍 Адрес офиса:
-ул. Восстания 10
+📍 Также вы можете приехать к нам:
+*ул. Восстания 10*
 
-📞 Менеджеры:
+📞 Или позвонить напрямую:
 • Сергей: 777 26536
 • Александр: 777 72473
 • Виталий: 777 72473`,
-        keyboard
+        { parse_mode: "Markdown", ...keyboard }
       );
 
     } catch (e) {
@@ -256,12 +151,19 @@ bot.on("message", async (msg) => {
 
   }
 
-  // любой текст — Claude
+  // Любой текст — Claude отвечает
   try {
 
     bot.sendChatAction(chatId, "typing");
 
+    const typingInterval = setInterval(
+      () => bot.sendChatAction(chatId, "typing"),
+      4000
+    );
+
     const reply = await askClaude(chatId, text);
+
+    clearInterval(typingInterval);
 
     return bot.sendMessage(chatId, reply, keyboard);
 
@@ -271,9 +173,12 @@ bot.on("message", async (msg) => {
 
     return bot.sendMessage(
       chatId,
-      "Произошла ошибка. Попробуйте позже."
+      "Произошла ошибка. Попробуйте позже.",
+      keyboard
     );
 
   }
 
 });
+
+console.log("РеалИнвест BOT запущен!");
