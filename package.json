@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "bot.js",
   "scripts": { "start": "node bot.js" },
+  "engines": { "node": ">=20.0.0" },
   "dependencies": {
     "node-telegram-bot-api": "^0.64.0",
     "@anthropic-ai/sdk": "^0.20.9",
