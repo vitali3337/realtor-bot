@@ -2,12 +2,16 @@ require("dotenv").config();
 const TelegramBot = require("node-telegram-bot-api");
 const Anthropic   = require("@anthropic-ai/sdk");
 const fs          = require("fs");
+const axios       = require("axios");
+const cheerio     = require("cheerio");
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const ANTHROPIC_KEY  = process.env.ANTHROPIC_API_KEY;
 const ADMIN_ID       = -1003773163201;
 const ADMIN_IDS      = (process.env.ADMIN_IDS || "5705817827").split(",").map(x => x.trim());
 const DB_FILE        = "./properties.json";
+const SEEN_FILE      = "./seen_ads.json";
+const CHECK_INTERVAL = 5 * 60 * 1000; // каждые 5 минут
 
 if (!TELEGRAM_TOKEN) { console.error("TELEGRAM_TOKEN не найден"); process.exit(1); }
 if (!ANTHROPIC_KEY)  { console.error("ANTHROPIC_API_KEY не найден"); process.exit(1); }
@@ -15,20 +19,19 @@ if (!ANTHROPIC_KEY)  { console.error("ANTHROPIC_API_KEY не найден"); pro
 const bot    = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 const client = new Anthropic({ apiKey: ANTHROPIC_KEY });
 
-const SYSTEM_PROMPT = `Ты — вежливый помощник агентства недвижимости Real Invest (РеалИнвест) в Тирасполе.
-Адрес: ул. Восстания 10. Менеджеры: Сергей (777 26536), Александр (777 72487), Виталий (777 72473).
-Занимаемся продажей недвижимости в Приднестровье.
-Отвечай коротко, 2-3 предложения. Когда клиент готов — скажи ему нажать кнопку "📱 Отправить мой номер" внизу. Только русский язык.`;
-
-const users         = {};
-const conversations = {};
-const adminStates   = {};
-
+// ===== БД =====
 function loadDB() {
   try { return JSON.parse(fs.readFileSync(DB_FILE, "utf8")); }
   catch { return { properties: [], clients: {} }; }
 }
 function saveDB(db) { fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)); }
+
+function loadSeen() {
+  try { return JSON.parse(fs.readFileSync(SEEN_FILE, "utf8")); }
+  catch { return {}; }
+}
+function saveSeen(seen) { fs.writeFileSync(SEEN_FILE, JSON.stringify(seen, null, 2)); }
+
 function isAdmin(id) { return ADMIN_IDS.includes(String(id)); }
 function getHistory(chatId) {
   if (!conversations[chatId]) conversations[chatId] = [];
@@ -45,13 +48,20 @@ function saveClient(chatId, type) {
   db.clients[chatId] = { type, date: new Date().toISOString() };
   saveDB(db);
 }
-
-// Извлечь номер телефона из любого текста
 function extractPhone(text) {
   const digits = text.replace(/[^\d+]/g, "");
   const match  = digits.match(/\+?[\d]{7,15}/);
   return match ? match[0] : null;
 }
+
+const users         = {};
+const conversations = {};
+const adminStates   = {};
+
+const SYSTEM_PROMPT = `Ты — вежливый помощник агентства недвижимости Real Invest (РеалИнвест) в Тирасполе.
+Адрес: ул. Восстания 10. Менеджеры: Сергей (777 26536), Александр (777 72487), Виталий (777 72473).
+Занимаемся продажей недвижимости в Приднестровье.
+Отвечай коротко, 2-3 предложения. Когда клиент готов — скажи нажать кнопку "Отправить мой номер". Только русский язык.`;
 
 // ===== КНОПКИ =====
 const mainKeyboard = {
@@ -66,7 +76,6 @@ const mainKeyboard = {
   }
 };
 
-// Кнопка отправки контакта
 const contactKeyboard = {
   reply_markup: {
     keyboard: [
@@ -77,6 +86,110 @@ const contactKeyboard = {
     one_time_keyboard: true
   }
 };
+
+// ===== MAKLER ПАРСЕР =====
+const MAKLER_URLS = [
+  "https://makler.md/tiraspol/real-estate/real-estate-for-sale/apartments-for-sale/",
+  "https://makler.md/tiraspol/real-estate/real-estate-for-sale/houses-for-sale/",
+  "https://makler.md/bender/real-estate/real-estate-for-sale/apartments-for-sale/",
+  "https://makler.md/bender/real-estate/real-estate-for-sale/houses-for-sale/",
+  "https://makler.md/ribnitsa/real-estate/real-estate-for-sale/apartments-for-sale/",
+];
+
+async function parseMakler() {
+  const ads = [];
+  for (const url of MAKLER_URLS) {
+    try {
+      const { data } = await axios.get(url, {
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+        timeout: 15000
+      });
+      const $ = cheerio.load(data);
+      $("a[href*='/real-estate/']").each((i, el) => {
+        const href  = $(el).attr("href") || "";
+        const title = $(el).text().trim();
+        if (href && href.includes("/an/") && title.length > 5) {
+          const fullLink = href.startsWith("http") ? href : "https://makler.md" + href;
+          const price = $(el).closest("div, li, article").find("[class*='price'], .price").first().text().trim();
+          const phone = $(el).closest("div, li, article").find("[class*='phone'], .phone").first().text().trim();
+          ads.push({
+            id: fullLink,
+            title: title.substring(0, 100),
+            price: price || "Цена не указана",
+            phone: phone || "Смотри на сайте",
+            link: fullLink,
+            city: url.includes("tiraspol") ? "Тирасполь" :
+                  url.includes("bender")   ? "Бендеры"   : "Рыбница"
+          });
+        }
+      });
+    } catch (e) {
+      console.error(`Ошибка парсинга: ${e.message}`);
+    }
+  }
+  return ads;
+}
+
+async function checkNewAds() {
+  console.log(`[${new Date().toLocaleTimeString()}] Проверяю Makler...`);
+  const seen = loadSeen();
+  const ads  = await parseMakler();
+  let newCount = 0;
+
+  for (const ad of ads) {
+    if (!seen[ad.id]) {
+      seen[ad.id] = true;
+      if (Object.keys(seen).length > ads.length + 5) {
+        newCount++;
+        try {
+          await bot.sendMessage(ADMIN_ID,
+            `🔥 *Новый объект на Makler!*\n\n` +
+            `📍 Город: ${ad.city}\n` +
+            `🏠 ${ad.title}\n` +
+            `💰 ${ad.price}\n` +
+            `📱 Телефон: ${ad.phone}\n\n` +
+            `🔗 [Смотреть объявление](${ad.link})\n\n` +
+            `━━━━━━━━━━━━━━━\n` +
+            `💼 Позвони первым и предложи услуги РеалИнвест!`,
+            { parse_mode: "Markdown", disable_web_page_preview: false }
+          );
+          await new Promise(r => setTimeout(r, 2000));
+        } catch (e) {
+          console.error("Ошибка отправки:", e.message);
+        }
+      }
+    }
+  }
+
+  saveSeen(seen);
+  if (newCount > 0) console.log(`Новых объявлений: ${newCount}`);
+}
+
+async function initMaklerMonitor() {
+  const seen = loadSeen();
+  if (Object.keys(seen).length === 0) {
+    console.log("Собираю базу Makler...");
+    const ads = await parseMakler();
+    for (const ad of ads) seen[ad.id] = true;
+    saveSeen(seen);
+    console.log(`База собрана: ${ads.length} объявлений`);
+    try {
+      await bot.sendMessage(ADMIN_ID,
+        `✅ *Мониторинг Makler запущен!*\n\n` +
+        `📊 Запомнил ${ads.length} существующих объявлений\n` +
+        `⏰ Проверяю каждые 5 минут\n\n` +
+        `📍 Слежу за:\n` +
+        `• Тирасполь — квартиры и дома\n` +
+        `• Бендеры — квартиры и дома\n` +
+        `• Рыбница — квартиры\n\n` +
+        `🔔 При новых объявлениях сразу пришлю сюда!`,
+        { parse_mode: "Markdown" }
+      );
+    } catch {}
+  } else {
+    console.log(`База Makler загружена: ${Object.keys(seen).length} объявлений`);
+  }
+}
 
 // ===== ПОКАЗАТЬ ОБЪЕКТ =====
 async function showProperty(chatId, property, index, total) {
@@ -148,15 +261,11 @@ async function sendLead(msg, phone, propertyTitle) {
 
 async function confirmLead(chatId, msg, phone, propertyTitle) {
   await sendLead(msg, phone, propertyTitle);
-  const u = users[chatId] || {};
   delete users[chatId];
   conversations[chatId] = [];
   saveClient(chatId, "заявка");
   await bot.sendMessage(chatId,
-    `✅ *Спасибо! Заявка принята.*\n\n` +
-    `Менеджер свяжется с вами в ближайшее время.\n\n` +
-    `📍 ул. Восстания 10, Тирасполь\n` +
-    `📞 777 26536 / 777 72473`,
+    `✅ *Спасибо! Заявка принята.*\n\nМенеджер свяжется с вами в ближайшее время.\n\n📍 ул. Восстания 10, Тирасполь\n📞 777 26536 / 777 72473`,
     { parse_mode: "Markdown", ...mainKeyboard }
   );
 }
@@ -187,10 +296,7 @@ bot.onText(/\/clear/, (msg) => {
 bot.onText(/\/add/, (msg) => {
   if (!isAdmin(msg.chat.id)) return;
   adminStates[msg.chat.id] = { step: "photo" };
-  bot.sendMessage(msg.chat.id,
-    "📸 *Добавление объекта*\n\nШаг 1/6: Отправь фото\n(или /skip)",
-    { parse_mode: "Markdown" }
-  );
+  bot.sendMessage(msg.chat.id, "📸 *Добавление объекта*\n\nШаг 1/6: Отправь фото\n(или /skip)", { parse_mode: "Markdown" });
 });
 
 bot.onText(/\/list/, (msg) => {
@@ -238,7 +344,14 @@ bot.onText(/\/sendall/, async (msg) => {
   bot.sendMessage(msg.chat.id, `✅ Готово! Отправлено: ${sent}/${clients.length}`);
 });
 
-// ===== КОНТАКТ (кнопка "Отправить номер") =====
+bot.onText(/\/makler/, async (msg) => {
+  if (!isAdmin(msg.chat.id)) return;
+  bot.sendMessage(msg.chat.id, "🔍 Проверяю Makler прямо сейчас...");
+  await checkNewAds();
+  bot.sendMessage(msg.chat.id, "✅ Готово! Новые объявления если есть — уже в группе.");
+});
+
+// ===== КОНТАКТ =====
 bot.on("contact", async (msg) => {
   const chatId = msg.chat.id;
   const phone  = msg.contact.phone_number;
@@ -268,27 +381,23 @@ bot.on("callback_query", async (query) => {
     users[chatId] = { type: "ПОКУПКА", property: prop?.title };
     bot.answerCallbackQuery(query.id);
     return bot.sendMessage(chatId,
-      `Отлично! 😊\n\nНажмите кнопку ниже чтобы отправить номер телефона — менеджер свяжется для просмотра *${prop?.title || "объекта"}*`,
+      `Отлично! 😊\n\nНажмите кнопку ниже — менеджер свяжется для просмотра *${prop?.title || "объекта"}*`,
       { parse_mode: "Markdown", ...contactKeyboard }
     );
   }
 });
 
-// ===== ФОТО ОТ АДМИНА =====
+// ===== ФОТО =====
 bot.on("photo", async (msg) => {
   const chatId = msg.chat.id;
-
   if (!isAdmin(chatId)) {
     const u = users[chatId] || {};
     try {
       await bot.forwardMessage(ADMIN_ID, chatId, msg.message_id);
-      await bot.sendMessage(ADMIN_ID,
-        `📸 Фото от клиента\n👤 ${msg.from.first_name || "—"} @${msg.from.username || "нет"}\n📌 ${u.type || "не указан"}`
-      );
+      await bot.sendMessage(ADMIN_ID, `📸 Фото от клиента\n👤 ${msg.from.first_name || "—"} @${msg.from.username || "нет"}\n📌 ${u.type || "не указан"}`);
     } catch {}
     return bot.sendMessage(chatId, "Фото получено! Менеджер свяжется с вами.", mainKeyboard);
   }
-
   const state = adminStates[chatId];
   if (!state || state.step !== "photo") return;
   const fileId = msg.photo[msg.photo.length - 1].file_id;
@@ -302,25 +411,15 @@ bot.on("message", async (msg) => {
   const text   = msg.text;
   if (!text || text.startsWith("/")) return;
 
-  // Режим добавления (админ)
   if (isAdmin(chatId) && adminStates[chatId]) {
     const state = adminStates[chatId];
     if (text === "/skip" && state.step === "photo") {
       adminStates[chatId] = { ...state, step: "title" };
       return bot.sendMessage(chatId, "Шаг 2/6: Название:");
     }
-    if (state.step === "title") {
-      adminStates[chatId] = { ...state, title: text, step: "address" };
-      return bot.sendMessage(chatId, "Шаг 3/6: Адрес:");
-    }
-    if (state.step === "address") {
-      adminStates[chatId] = { ...state, address: text, step: "price" };
-      return bot.sendMessage(chatId, "Шаг 4/6: Цена:");
-    }
-    if (state.step === "price") {
-      adminStates[chatId] = { ...state, price: text, step: "details" };
-      return bot.sendMessage(chatId, "Шаг 5/6: Детали (комнаты, площадь, этаж) или /skip:");
-    }
+    if (state.step === "title")   { adminStates[chatId] = { ...state, title:   text, step: "address" };     return bot.sendMessage(chatId, "Шаг 3/6: Адрес:"); }
+    if (state.step === "address") { adminStates[chatId] = { ...state, address: text, step: "price" };       return bot.sendMessage(chatId, "Шаг 4/6: Цена:"); }
+    if (state.step === "price")   { adminStates[chatId] = { ...state, price:   text, step: "details" };     return bot.sendMessage(chatId, "Шаг 5/6: Детали (комнаты, площадь, этаж) или /skip:"); }
     if (state.step === "details") {
       let rooms = "", area = "", floor = "";
       if (text !== "/skip") {
@@ -336,16 +435,10 @@ bot.on("message", async (msg) => {
     if (state.step === "description") {
       const db = loadDB();
       const newProp = {
-        id: Date.now().toString(),
-        photo: state.photo || null,
-        title: state.title,
-        address: state.address,
-        price: state.price,
-        rooms: state.rooms || "",
-        area: state.area  || "",
-        floor: state.floor || "",
-        description: text !== "/skip" ? text : "",
-        date: new Date().toISOString()
+        id: Date.now().toString(), photo: state.photo || null,
+        title: state.title, address: state.address, price: state.price,
+        rooms: state.rooms || "", area: state.area || "", floor: state.floor || "",
+        description: text !== "/skip" ? text : "", date: new Date().toISOString()
       };
       db.properties.push(newProp);
       saveDB(db);
@@ -357,34 +450,24 @@ bot.on("message", async (msg) => {
     }
   }
 
-  // Кнопка назад
-  if (text === "🔙 Назад") {
-    return bot.sendMessage(chatId, "Выберите действие 👇", mainKeyboard);
-  }
+  if (text === "🔙 Назад") return bot.sendMessage(chatId, "Выберите действие 👇", mainKeyboard);
 
-  // Каталог
   if (text === "📋 Смотреть объекты") {
     const db = loadDB();
     saveClient(chatId, "просмотр");
-    if (!db.properties.length) {
-      return bot.sendMessage(chatId,
-        "Сейчас обновляем каталог.\n📞 777 26536 / 777 72473",
-        mainKeyboard
-      );
-    }
+    if (!db.properties.length) return bot.sendMessage(chatId, "Сейчас обновляем каталог.\n📞 777 26536 / 777 72473", mainKeyboard);
     await bot.sendMessage(chatId, `📋 У нас ${db.properties.length} объектов 👇`, mainKeyboard);
     return showProperty(chatId, db.properties[0], 0, db.properties.length);
   }
 
-  // Быстрые кнопки
   const quickActions = {
-    "🏠 Купить недвижимость":    { type: "ПОКУПКА",   prompt: "Клиент хочет купить недвижимость. Спроси район и бюджет. Предложи посмотреть каталог объектов кнопкой." },
-    "🏷 Продать недвижимость":   { type: "ПРОДАЖА",   prompt: "Клиент хочет продать недвижимость. Скажи что бесплатно оценим и поможем продать быстро. Попроси номер телефона — скажи нажать кнопку 'Отправить мой номер'." },
-    "🏢 Сдать недвижимость":     { type: "СДАЧА",     prompt: "Клиент хочет сдать недвижимость. Скажи что специализируемся на продаже, но можем помочь с оценкой." },
-    "🔑 Снять недвижимость":     { type: "АРЕНДА",    prompt: "Клиент хочет снять недвижимость. Скажи что мы занимаемся продажей и предложи посмотреть объекты на покупку." },
-    "🏦 Рассчитать ипотеку":     { type: "ИПОТЕКА",   prompt: "Клиент хочет рассчитать ипотеку. Спроси стоимость, взнос и срок. Посчитай ежемесячный платёж." },
+    "🏠 Купить недвижимость":    { type: "ПОКУПКА",   prompt: "Клиент хочет купить недвижимость. Спроси район и бюджет. Предложи каталог объектов." },
+    "🏷 Продать недвижимость":   { type: "ПРОДАЖА",   prompt: "Клиент хочет продать. Скажи что бесплатно оценим. Попроси нажать кнопку отправки номера." },
+    "🏢 Сдать недвижимость":     { type: "СДАЧА",     prompt: "Клиент хочет сдать. Скажи что специализируемся на продаже но можем помочь с оценкой." },
+    "🔑 Снять недвижимость":     { type: "АРЕНДА",    prompt: "Клиент хочет снять. Скажи что занимаемся продажей и предложи посмотреть объекты на покупку." },
+    "🏦 Рассчитать ипотеку":     { type: "ИПОТЕКА",   prompt: "Клиент хочет рассчитать ипотеку. Спроси стоимость, взнос и срок. Посчитай платёж." },
     "📄 Документы":              { type: "ДОКУМЕНТЫ", prompt: "Клиент спрашивает про документы для сделки в ПМР. Расскажи кратко." },
-    "📞 Связаться с менеджером": { type: "СВЯЗЬ",     prompt: "Клиент хочет связаться с менеджером. Скажи оставить номер — нажать кнопку 'Отправить мой номер'." },
+    "📞 Связаться с менеджером": { type: "СВЯЗЬ",     prompt: "Клиент хочет связаться. Скажи оставить номер — нажать кнопку." },
   };
 
   if (quickActions[text]) {
@@ -394,18 +477,13 @@ bot.on("message", async (msg) => {
     try {
       bot.sendChatAction(chatId, "typing");
       const reply = await askClaude(chatId, action.prompt);
-      // Показываем кнопку отправки номера
       await bot.sendMessage(chatId, reply, mainKeyboard);
-      return bot.sendMessage(chatId,
-        "👇 Нажмите кнопку чтобы быстро отправить номер:",
-        contactKeyboard
-      );
+      return bot.sendMessage(chatId, "👇 Нажмите чтобы отправить номер:", contactKeyboard);
     } catch {
       return bot.sendMessage(chatId, "Произошла ошибка. Попробуйте ещё раз.", mainKeyboard);
     }
   }
 
-  // Номер телефона в тексте — любой формат
   const phone = extractPhone(text);
   if (phone && phone.length >= 7) {
     const u = users[chatId] || {};
@@ -413,7 +491,6 @@ bot.on("message", async (msg) => {
     return;
   }
 
-  // Claude
   try {
     bot.sendChatAction(chatId, "typing");
     const typingInterval = setInterval(() => bot.sendChatAction(chatId, "typing"), 4000);
@@ -425,4 +502,9 @@ bot.on("message", async (msg) => {
   }
 });
 
-console.log("РеалИнвест BOT запущен!");
+// ===== ЗАПУСК =====
+(async () => {
+  await initMaklerMonitor();
+  setInterval(checkNewAds, CHECK_INTERVAL);
+  console.log("РеалИнвест BOT + Makler мониторинг запущен!");
+})();
