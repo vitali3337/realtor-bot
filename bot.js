@@ -1,4 +1,3 @@
-
 require("dotenv").config();
 const TelegramBot = require("node-telegram-bot-api");
 const Anthropic = require("@anthropic-ai/sdk");
@@ -51,9 +50,9 @@ function isAdmin(id) { return ADMIN_IDS.includes(String(id)); }
 // ============================================================
 // СОСТОЯНИЯ
 // ============================================================
-const userState = {};    // { type, property }
-const chatHistory = {};  // история диалога
-const addState = {};     // состояние добавления объекта
+const userState = {};
+const chatHistory = {};
+const addState = {};
 
 function getHistory(id) {
   if (!chatHistory[id]) chatHistory[id] = [];
@@ -144,9 +143,9 @@ async function showProperty(chatId, prop, idx, total) {
       inline_keyboard: [
         [{ text: "✅ Хочу посмотреть", callback_data: `want:${prop.id}` }],
         [
-          { text: idx > 0        ? "◀ Пред" : "·",    callback_data: idx > 0        ? `prop:${idx - 1}` : "noop" },
-          { text: `${idx + 1} / ${total}`,              callback_data: "noop" },
-          { text: idx < total - 1 ? "След ▶" : "·",   callback_data: idx < total - 1 ? `prop:${idx + 1}` : "noop" }
+          { text: idx > 0         ? "◀ Пред" : "·",  callback_data: idx > 0         ? `prop:${idx - 1}` : "noop" },
+          { text: `${idx + 1} / ${total}`,             callback_data: "noop" },
+          { text: idx < total - 1 ? "След ▶" : "·",  callback_data: idx < total - 1 ? `prop:${idx + 1}` : "noop" }
         ]
       ]
     }
@@ -263,10 +262,14 @@ async function checkMakler() {
         `─────────────────\n` +
         `💼 Позвони первым — предложи услуги РеалИнвест!`;
 
-      const inlineKb = { reply_markup: { inline_keyboard: [[
-        ...(ad.phone ? [{ text: "📞 Позвонить", url: `tel:${ad.phone.replace(/\D/g, "")}` }] : []),
-        { text: "🔗 Открыть", url: ad.link }
-      ]] } };
+      const inlineKb = {
+        reply_markup: {
+          inline_keyboard: [[
+            ...(ad.phone ? [{ text: "📞 Позвонить", url: `tel:${ad.phone.replace(/\D/g, "")}` }] : []),
+            { text: "🔗 Открыть", url: ad.link }
+          ]]
+        }
+      };
 
       if (ad.img) {
         await bot.sendPhoto(ADMIN_GROUP, ad.img, { caption: text, parse_mode: "Markdown", ...inlineKb })
@@ -435,7 +438,6 @@ bot.on("callback_query", async q => {
 bot.on("photo", async msg => {
   const id = msg.chat.id;
 
-  // Если это НЕ админ — пересылаем фото в группу
   if (!isAdmin(id)) {
     const u = userState[id] || {};
     try {
@@ -445,7 +447,6 @@ bot.on("photo", async msg => {
     return bot.sendMessage(id, "Фото получено! Менеджер свяжется с вами.", mainKb);
   }
 
-  // Админ добавляет объект
   const st = addState[id];
   if (!st || st.step !== "photo") return;
   const fileId = msg.photo[msg.photo.length - 1].file_id;
@@ -485,9 +486,9 @@ bot.on("message", async msg => {
       let rooms = "", area = "", floor = "";
       if (text !== "/skip") {
         text.split(",").map(s => s.trim()).forEach(p => {
-          if (/комнат/i.test(p))    rooms = p;
-          else if (/м²|м2|кв/i.test(p)) area = p;
-          else if (/этаж/i.test(p)) floor = p;
+          if (/комнат/i.test(p))         rooms = p;
+          else if (/м²|м2|кв/i.test(p))  area  = p;
+          else if (/этаж/i.test(p))       floor = p;
         });
       }
       addState[id] = { ...st, rooms, area, floor, step: "desc" };
@@ -533,8 +534,22 @@ bot.on("message", async msg => {
   }
 
   const MENU = {
-    "🏠 Купить недвижимость": { type: "ПОКУПКА",   prompt: "Клиент хочет купить недвижимость в Приднестровье. Спроси район и бюджет. Предложи посмотреть каталог объектов." },
-    "🏷 Продать недвижимость": { type: "ПРОДАЖА",   prompt: "Клиент хочет продать недвижимость. Скажи что бесплатно оценим и быстро найдём покупателя. Попроси оставить номер." },
-    "🏦 Ипотека":              { type: "ИПОТЕКА",   prompt: "Клиент хочет узнать про ипотеку. Спроси стоимость объекта, первоначальный взнос и срок. Посчитай платёж." },
-    "📄 Документы":            { type: "ДОКУМЕНТЫ", prompt: "Клиент спрашивает про документы для купли-продажи в ПМР. Объясни кратко что нужно." },
-    "📞 Менеджер":   
+    "🏠 Купить недвижимость": {
+      type: "ПОКУПКА",
+      prompt: "Клиент хочет купить недвижимость в Приднестровье. Спроси район и бюджет. Предложи посмотреть каталог объектов."
+    },
+    "🏷 Продать недвижимость": {
+      type: "ПРОДАЖА",
+      prompt: "Клиент хочет продать недвижимость. Скажи что бесплатно оценим и быстро найдём покупателя. Попроси оставить номер."
+    },
+    "🏦 Ипотека": {
+      type: "ИПОТЕКА",
+      prompt: "Клиент хочет узнать про ипотеку. Спроси стоимость объекта, первоначальный взнос и срок. Посчитай примерный платёж."
+    },
+    "📄 Документы": {
+      type: "ДОКУМЕНТЫ",
+      prompt: "Клиент спрашивает про документы для купли-продажи в ПМР. Объясни кратко что нужно."
+    },
+    "📞 Менеджер": {
+      type: "МЕНЕДЖЕР",
+      prompt: "Клиент хочет связаться с менеджером. Дай контакты: Сергей 777 
