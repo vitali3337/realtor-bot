@@ -1,345 +1,431 @@
-require("dotenv").config();
-const TelegramBot = require("node-telegram-bot-api");
-const Anthropic = require("@anthropic-ai/sdk");
-const fs = require("fs");
-const axios = require("axios");
-const cheerio = require("cheerio");
+require("dotenv").config()
 
-const TOKEN = process.env.TELEGRAM_TOKEN;
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+const TelegramBot = require("node-telegram-bot-api")
+const Anthropic = require("@anthropic-ai/sdk")
+const axios = require("axios")
+const cheerio = require("cheerio")
+const fs = require("fs")
 
-const ADMIN_GROUP = -1003773163201;
+// ===== CONFIG =====
 
-const DB_FILE = "./properties.json";
-const SEEN_FILE = "./seen_ads.json";
+const TOKEN = process.env.TELEGRAM_TOKEN
+const AI_KEY = process.env.ANTHROPIC_API_KEY
 
-const CHECK_INTERVAL = 5 * 60 * 1000;
+const ADMIN_GROUP = -1003773163201
 
-if (!TOKEN) {
-  console.log("Нет TELEGRAM_TOKEN");
-  process.exit();
+const DB_FILE = "./db.json"
+const SEEN_FILE = "./seen.json"
+
+const CHECK_INTERVAL = 5 * 60 * 1000
+
+if(!TOKEN){
+console.log("TELEGRAM_TOKEN отсутствует")
+process.exit()
 }
 
-const bot = new TelegramBot(TOKEN, { polling: true });
+const bot = new TelegramBot(TOKEN,{ polling:true })
 
-const claude = new Anthropic({
-  apiKey: ANTHROPIC_KEY
-});
+const ai = new Anthropic({
+apiKey: AI_KEY
+})
 
-bot.on("polling_error", console.log);
+// ===== STORAGE =====
 
-const users = {};
-const history = {};
+let users = {}
+let history = {}
 
-function loadDB() {
-  try {
-    return JSON.parse(fs.readFileSync(DB_FILE));
-  } catch {
-    return { properties: [], clients: {} };
-  }
+function loadDB(){
+
+try{
+return JSON.parse(fs.readFileSync(DB_FILE))
+}catch{
+return {properties:[],clients:{}}
 }
 
-function saveDB(db) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
 }
 
-function loadSeen() {
-  try {
-    return JSON.parse(fs.readFileSync(SEEN_FILE));
-  } catch {
-    return {};
-  }
+function saveDB(db){
+fs.writeFileSync(DB_FILE,JSON.stringify(db,null,2))
 }
 
-function saveSeen(s) {
-  fs.writeFileSync(SEEN_FILE, JSON.stringify(s, null, 2));
+function loadSeen(){
+
+try{
+return JSON.parse(fs.readFileSync(SEEN_FILE))
+}catch{
+return {}
 }
 
-function saveClient(id, type) {
-  const db = loadDB();
-  db.clients[id] = {
-    type,
-    date: new Date().toISOString()
-  };
-  saveDB(db);
 }
 
-function phoneFromText(text) {
-  const t = text.replace(/[^\d+]/g, "");
-  const m = t.match(/\+?\d{7,15}/);
-  return m ? m[0] : null;
+function saveSeen(data){
+fs.writeFileSync(SEEN_FILE,JSON.stringify(data,null,2))
 }
+
+// ===== SAVE CLIENT =====
+
+function saveClient(id,type){
+
+const db = loadDB()
+
+db.clients[id] = {
+type,
+date:new Date().toISOString()
+}
+
+saveDB(db)
+
+}
+
+// ===== PHONE PARSER =====
+
+function extractPhone(text){
+
+const clean = text.replace(/[^\d+]/g,"")
+
+const match = clean.match(/\+?\d{7,15}/)
+
+return match ? match[0] : null
+
+}
+
+// ===== KEYBOARDS =====
 
 const mainKb = {
-  reply_markup: {
-    keyboard: [
-      ["🏠 Купить недвижимость", "🏷 Продать недвижимость"],
-      ["📋 Смотреть объекты", "📞 Связаться с менеджером"]
-    ],
-    resize_keyboard: true
-  }
-};
+reply_markup:{
+keyboard:[
+["🏠 Купить","🏷 Продать"],
+["📋 Смотреть объекты","📞 Менеджер"]
+],
+resize_keyboard:true
+}
+}
 
 const contactKb = {
-  reply_markup: {
-    keyboard: [
-      [{ text: "📱 Отправить мой номер", request_contact: true }]
-    ],
-    resize_keyboard: true,
-    one_time_keyboard: true
-  }
-};
-
-async function askClaude(chatId, text) {
-
-  if (!history[chatId]) history[chatId] = [];
-
-  history[chatId].push({
-    role: "user",
-    content: text
-  });
-
-  const res = await claude.messages.create({
-    model: "claude-3-5-sonnet-20241022",
-    max_tokens: 300,
-    system: "Ты помощник агентства недвижимости РеалИнвест. Отвечай коротко.",
-    messages: history[chatId]
-  });
-
-  const reply = res.content[0].text;
-
-  history[chatId].push({
-    role: "assistant",
-    content: reply
-  });
-
-  return reply;
+reply_markup:{
+keyboard:[
+[{text:"📱 Отправить номер",request_contact:true}]
+],
+resize_keyboard:true,
+one_time_keyboard:true
+}
 }
 
-async function sendLead(msg, phone) {
+// ===== AI =====
 
-  const text =
-`📥 НОВАЯ ЗАЯВКА
+async function askAI(chatId,text){
 
-Имя: ${msg.from.first_name}
-Username: @${msg.from.username || "нет"}
+if(!history[chatId]) history[chatId]=[]
 
-Телефон: ${phone}`;
+history[chatId].push({
+role:"user",
+content:text
+})
 
-  await bot.sendMessage(ADMIN_GROUP, text);
+const res = await ai.messages.create({
+
+model:"claude-3-5-sonnet-20241022",
+
+max_tokens:300,
+
+system:"Ты помощник агентства недвижимости РеалИнвест в Тирасполе. Отвечай коротко.",
+
+messages:history[chatId]
+
+})
+
+const reply = res.content[0].text
+
+history[chatId].push({
+role:"assistant",
+content:reply
+})
+
+return reply
+
 }
 
-async function showProperty(chatId, prop) {
+// ===== SHOW PROPERTY =====
 
-  const text =
+async function showProperty(chatId,prop){
+
+const text=
+
 `🏠 ${prop.title}
 
 📍 ${prop.address}
 
 💰 ${prop.price}
 
-📞 77726536`;
+📞 77726536`
 
-  if (prop.photo) {
+if(prop.photo){
 
-    await bot.sendPhoto(chatId, prop.photo, {
-      caption: text
-    });
+await bot.sendPhoto(chatId,prop.photo,{
+caption:text
+})
 
-  } else {
+}else{
 
-    await bot.sendMessage(chatId, text);
-
-  }
+await bot.sendMessage(chatId,text)
 
 }
 
-const MAKLER_URLS = [
+}
+
+// ===== LEAD =====
+
+async function sendLead(msg,phone){
+
+const text=
+
+`📥 НОВАЯ ЗАЯВКА
+
+Имя: ${msg.from.first_name}
+
+Username: @${msg.from.username || "нет"}
+
+Телефон: ${phone}`
+
+await bot.sendMessage(ADMIN_GROUP,text)
+
+}
+
+// ===== MAKLER PARSER =====
+
+const URLS = [
+
 "https://makler.md/tiraspol/real-estate/real-estate-for-sale/apartments-for-sale/",
 "https://makler.md/tiraspol/real-estate/real-estate-for-sale/houses-for-sale/"
-];
 
-async function parseMakler() {
+]
 
-  const ads = [];
+async function parseMakler(){
 
-  for (const url of MAKLER_URLS) {
+const ads=[]
 
-    try {
+for(const url of URLS){
 
-      const { data } = await axios.get(url);
+try{
 
-      const $ = cheerio.load(data);
+const {data}=await axios.get(url,{
+headers:{ "User-Agent":"Mozilla/5.0"}
+})
 
-      $("a[href*='/an/']").each((i, el) => {
+const $ = cheerio.load(data)
 
-        const href = $(el).attr("href");
-        const title = $(el).text().trim();
+$("a[href*='/an/']").each((i,el)=>{
 
-        if (!href || title.length < 5) return;
+const href=$(el).attr("href")
+const title=$(el).text().trim()
 
-        const link = "https://makler.md" + href;
+if(!href || title.length<5) return
 
-        ads.push({
-          id: link,
-          title,
-          link
-        });
+const link="https://makler.md"+href
 
-      });
+const low=title.toLowerCase()
 
-    } catch {}
+if(
+low.includes("агентство")||
+low.includes("риелтор")||
+low.includes("агент")
+) return
 
-  }
+ads.push({
+id:link,
+title,
+link
+})
 
-  return ads;
+})
+
+}catch(e){
+
+console.log("Makler error")
 
 }
 
-async function checkMakler() {
+}
 
-  const seen = loadSeen();
+return ads
 
-  const ads = await parseMakler();
+}
 
-  for (const ad of ads) {
+// ===== MAKLER CHECK =====
 
-    if (!seen[ad.id]) {
+async function checkMakler(){
 
-      seen[ad.id] = true;
+console.log("Makler check")
 
-      const msg =
-`🔥 Новый объект Makler
+const seen=loadSeen()
+
+const ads=await parseMakler()
+
+for(const ad of ads){
+
+if(!seen[ad.id]){
+
+seen[ad.id]=true
+
+await bot.sendMessage(
+
+ADMIN_GROUP,
+
+`🔥 Новый собственник
 
 ${ad.title}
 
-${ad.link}`;
+${ad.link}`
 
-      await bot.sendMessage(ADMIN_GROUP, msg);
-
-    }
-
-  }
-
-  saveSeen(seen);
+)
 
 }
 
-bot.onText(/\/start/, msg => {
+}
 
-  const id = msg.chat.id;
+saveSeen(seen)
 
-  users[id] = {};
+}
 
-  saveClient(id, "start");
+// ===== START =====
 
-  bot.sendMessage(id,
-`Здравствуйте!
+bot.onText(/\/start/,msg=>{
 
-Агентство РеалИнвест.
+const id=msg.chat.id
+
+users[id]={}
+
+saveClient(id,"start")
+
+bot.sendMessage(id,
+
+`👋 Добро пожаловать!
+
+Агентство недвижимости РеалИнвест
+
+📍 Тирасполь
+📞 77726536
 
 Выберите действие`,
-  mainKb);
 
-});
+mainKb)
 
-bot.on("contact", async msg => {
+})
 
-  const id = msg.chat.id;
+// ===== CONTACT =====
 
-  const phone = msg.contact.phone_number;
+bot.on("contact",async msg=>{
 
-  await sendLead(msg, phone);
+const id=msg.chat.id
 
-  bot.sendMessage(id,
-`Спасибо! Менеджер свяжется с вами.`,
-  mainKb);
+const phone=msg.contact.phone_number
 
-});
+await sendLead(msg,phone)
 
-bot.on("message", async msg => {
+bot.sendMessage(id,
 
-  const id = msg.chat.id;
+"Спасибо! Менеджер скоро свяжется.",
 
-  const text = msg.text;
+mainKb)
 
-  if (!text) return;
+})
 
-  if (text === "📋 Смотреть объекты") {
+// ===== MESSAGE =====
 
-    const db = loadDB();
+bot.on("message",async msg=>{
 
-    if (!db.properties.length) {
+const id=msg.chat.id
 
-      return bot.sendMessage(id, "Объекты скоро появятся");
+const text=msg.text
 
-    }
+if(!text) return
 
-    return showProperty(id, db.properties[0]);
+if(text==="📋 Смотреть объекты"){
 
-  }
+const db=loadDB()
 
-  if (text === "🏠 Купить недвижимость") {
+if(!db.properties.length){
 
-    users[id] = { type: "buy" };
+return bot.sendMessage(id,"Сейчас объектов нет")
 
-    return bot.sendMessage(id,
-"Напишите район и бюджет.",
-mainKb);
+}
 
-  }
+return showProperty(id,db.properties[0])
 
-  if (text === "🏷 Продать недвижимость") {
+}
 
-    users[id] = { type: "sell" };
+if(text==="🏠 Купить"){
 
-    return bot.sendMessage(id,
-"Отправьте номер телефона.",
-contactKb);
+users[id]={type:"buy"}
 
-  }
+return bot.sendMessage(id,
 
-  if (text === "📞 Связаться с менеджером") {
+"Напишите район и бюджет")
 
-    return bot.sendMessage(id,
-"Нажмите кнопку чтобы отправить номер.",
-contactKb);
+}
 
-  }
+if(text==="🏷 Продать"){
 
-  const phone = phoneFromText(text);
+users[id]={type:"sell"}
 
-  if (phone) {
+return bot.sendMessage(id,
 
-    await sendLead(msg, phone);
+"Отправьте номер телефона",
 
-    return bot.sendMessage(id,
-"Спасибо. Менеджер скоро позвонит.",
-mainKb);
+contactKb)
 
-  }
+}
 
-  try {
+if(text==="📞 Менеджер"){
 
-    const reply = await askClaude(id, text);
+return bot.sendMessage(id,
 
-    bot.sendMessage(id, reply);
+"Нажмите кнопку чтобы отправить номер",
 
-  } catch {
+contactKb)
 
-    bot.sendMessage(id,
-"Ошибка. Попробуйте позже.");
+}
 
-  }
+const phone=extractPhone(text)
 
-});
+if(phone){
 
-(async () => {
+await sendLead(msg,phone)
 
-  await checkMakler();
+return bot.sendMessage(id,
 
-  setInterval(checkMakler, CHECK_INTERVAL);
+"Спасибо. Менеджер скоро позвонит",
 
-  console.log("BOT STARTED");
+mainKb)
 
-})();
+}
+
+try{
+
+const reply=await askAI(id,text)
+
+bot.sendMessage(id,reply)
+
+}catch{
+
+bot.sendMessage(id,
+
+"Ошибка сервера")
+
+}
+
+})
+
+// ===== START SYSTEM =====
+
+async function startSystem(){
+
+console.log("BOT START")
+
+await checkMakler()
+
+setInterval(checkMakler,CHECK_INTERVAL)
+
+}
+
+startSystem()
