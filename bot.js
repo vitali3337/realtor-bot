@@ -382,12 +382,12 @@ await confirmLead(id,msg,phone);
 // MESSAGE
 // ============================================================
 
-bot.on("message",async msg=>{
+bot.on("message", async msg => {
 
-const id=msg.chat.id;
-const text=msg.text;
+  const id = msg.chat.id;
+  const text = msg.text;
 
-if(!text) return;
+  if (!text) return;
 
 if(text==="📋 Смотреть объекты"){
 
