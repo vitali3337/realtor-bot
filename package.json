@@ -1,15 +1,12 @@
 {
-"name":"realinvest-bot",
-"version":"1.0.0",
-"main":"bot.js",
-"scripts":{
-"start":"node bot.js"
-},
-"dependencies":{
-"axios":"^1.6.0",
-"cheerio":"^1.0.0",
-"dotenv":"^16.3.1",
-"node-telegram-bot-api":"^0.61.0",
-"@anthropic-ai/sdk":"^0.24.0"
-}
+  "name": "realinvest-bot",
+  "version": "1.0.0",
+  "main": "bot.js",
+  "scripts": { "start": "node bot.js" },
+  "engines": { "node": ">=20.0.0" },
+  "dependencies": {
+    "node-telegram-bot-api": "^0.64.0",
+    "@anthropic-ai/sdk": "^0.20.9",
+    "dotenv": "^16.0.0"
+  }
 }
