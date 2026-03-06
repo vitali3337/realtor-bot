@@ -6,7 +6,7 @@ const axios = require("axios")
 const cheerio = require("cheerio")
 const fs = require("fs")
 
-// ===== CONFIG =====
+// CONFIG
 
 const TOKEN = process.env.TELEGRAM_TOKEN
 const AI_KEY = process.env.ANTHROPIC_API_KEY
@@ -18,21 +18,25 @@ const SEEN_FILE = "./seen.json"
 
 const CHECK_INTERVAL = 5 * 60 * 1000
 
-if(!TOKEN){
-console.log("TELEGRAM_TOKEN отсутствует")
+if (!TOKEN) {
+console.log("TELEGRAM_TOKEN missing")
 process.exit()
 }
 
 const bot = new TelegramBot(TOKEN,{ polling:true })
 
-const ai = new Anthropic({
-apiKey: AI_KEY
-})
+let ai = null
 
-// ===== STORAGE =====
+if (AI_KEY){
+ai = new Anthropic({ apiKey: AI_KEY })
+}
+
+// MEMORY
 
 let users = {}
 let history = {}
+
+// DATABASE
 
 function loadDB(){
 
@@ -45,7 +49,9 @@ return {properties:[],clients:{}}
 }
 
 function saveDB(db){
+
 fs.writeFileSync(DB_FILE,JSON.stringify(db,null,2))
+
 }
 
 function loadSeen(){
@@ -59,10 +65,12 @@ return {}
 }
 
 function saveSeen(data){
+
 fs.writeFileSync(SEEN_FILE,JSON.stringify(data,null,2))
+
 }
 
-// ===== SAVE CLIENT =====
+// CLIENT SAVE
 
 function saveClient(id,type){
 
@@ -77,21 +85,21 @@ saveDB(db)
 
 }
 
-// ===== PHONE PARSER =====
+// PHONE PARSER
 
 function extractPhone(text){
 
-const clean = text.replace(/[^\d+]/g,"")
+const clean=text.replace(/[^\d+]/g,"")
 
-const match = clean.match(/\+?\d{7,15}/)
+const m=clean.match(/\+?\d{7,15}/)
 
-return match ? match[0] : null
+return m ? m[0] : null
 
 }
 
-// ===== KEYBOARDS =====
+// KEYBOARDS
 
-const mainKb = {
+const mainKb={
 reply_markup:{
 keyboard:[
 ["🏠 Купить","🏷 Продать"],
@@ -101,7 +109,7 @@ resize_keyboard:true
 }
 }
 
-const contactKb = {
+const contactKb={
 reply_markup:{
 keyboard:[
 [{text:"📱 Отправить номер",request_contact:true}]
@@ -111,9 +119,11 @@ one_time_keyboard:true
 }
 }
 
-// ===== AI =====
+// AI RESPONSE
 
 async function askAI(chatId,text){
+
+if(!ai) return "Напишите номер телефона и менеджер свяжется."
 
 if(!history[chatId]) history[chatId]=[]
 
@@ -134,7 +144,7 @@ messages:history[chatId]
 
 })
 
-const reply = res.content[0].text
+const reply=res.content[0].text
 
 history[chatId].push({
 role:"assistant",
@@ -145,7 +155,7 @@ return reply
 
 }
 
-// ===== SHOW PROPERTY =====
+// PROPERTY SHOW
 
 async function showProperty(chatId,prop){
 
@@ -161,9 +171,7 @@ const text=
 
 if(prop.photo){
 
-await bot.sendPhoto(chatId,prop.photo,{
-caption:text
-})
+await bot.sendPhoto(chatId,prop.photo,{caption:text})
 
 }else{
 
@@ -173,7 +181,7 @@ await bot.sendMessage(chatId,text)
 
 }
 
-// ===== LEAD =====
+// SEND LEAD
 
 async function sendLead(msg,phone){
 
@@ -191,11 +199,12 @@ await bot.sendMessage(ADMIN_GROUP,text)
 
 }
 
-// ===== MAKLER PARSER =====
+// MAKLER PARSER
 
-const URLS = [
+const URLS=[
 
 "https://makler.md/tiraspol/real-estate/real-estate-for-sale/apartments-for-sale/",
+
 "https://makler.md/tiraspol/real-estate/real-estate-for-sale/houses-for-sale/"
 
 ]
@@ -212,24 +221,28 @@ const {data}=await axios.get(url,{
 headers:{ "User-Agent":"Mozilla/5.0"}
 })
 
-const $ = cheerio.load(data)
+const $=cheerio.load(data)
 
 $("a[href*='/an/']").each((i,el)=>{
 
 const href=$(el).attr("href")
 const title=$(el).text().trim()
 
-if(!href || title.length<5) return
-
-const link="https://makler.md"+href
-
-const low=title.toLowerCase()
+if(!href) return
 
 if(
-low.includes("агентство")||
-low.includes("риелтор")||
-low.includes("агент")
-) return
+href.includes("add")||
+href.includes("notepad")||
+href.includes("category")||
+href.includes("edit")||
+href.includes("web")
+){
+return
+}
+
+if(title.length<15) return
+
+const link="https://makler.md"+href
 
 ads.push({
 id:link,
@@ -241,7 +254,7 @@ link
 
 }catch(e){
 
-console.log("Makler error")
+console.log("Makler parse error")
 
 }
 
@@ -251,7 +264,7 @@ return ads
 
 }
 
-// ===== MAKLER CHECK =====
+// MAKLER CHECK
 
 async function checkMakler(){
 
@@ -273,9 +286,9 @@ ADMIN_GROUP,
 
 `🔥 Новый собственник
 
-${ad.title}
+🏠 ${ad.title}
 
-${ad.link}`
+🔗 ${ad.link}`
 
 )
 
@@ -287,7 +300,7 @@ saveSeen(seen)
 
 }
 
-// ===== START =====
+// START
 
 bot.onText(/\/start/,msg=>{
 
@@ -312,7 +325,7 @@ mainKb)
 
 })
 
-// ===== CONTACT =====
+// CONTACT
 
 bot.on("contact",async msg=>{
 
@@ -330,7 +343,7 @@ mainKb)
 
 })
 
-// ===== MESSAGE =====
+// MESSAGE
 
 bot.on("message",async msg=>{
 
@@ -408,19 +421,17 @@ bot.sendMessage(id,reply)
 
 }catch{
 
-bot.sendMessage(id,
-
-"Ошибка сервера")
+bot.sendMessage(id,"Ошибка сервера")
 
 }
 
 })
 
-// ===== START SYSTEM =====
+// SYSTEM START
 
 async function startSystem(){
 
-console.log("BOT START")
+console.log("BOT STARTED")
 
 await checkMakler()
 
