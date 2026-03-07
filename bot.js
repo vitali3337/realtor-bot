@@ -9,16 +9,21 @@ const AI_KEY = process.env.ANTHROPIC_API_KEY;
 const ADMIN_GROUP = Number(process.env.ADMIN_GROUP) || -1003773163201;
 const ADMIN_IDS = (process.env.ADMIN_IDS || "5705817827").split(",");
 
-const DB_FILE = "./db.json";
+if (!TOKEN) {
+  console.log("❌ Нет TELEGRAM_TOKEN");
+  process.exit();
+}
 
-if (!TOKEN) { console.error("Нет TELEGRAM_TOKEN"); process.exit(1); }
-if (!AI_KEY) { console.error("Нет ANTHROPIC_API_KEY"); process.exit(1); }
-
-// INIT
 const bot = new TelegramBot(TOKEN, { polling: true });
-const ai = new Anthropic({ apiKey: AI_KEY });
+
+let ai = null;
+if (AI_KEY) {
+  ai = new Anthropic({ apiKey: AI_KEY });
+}
 
 // DATABASE
+const DB_FILE = "./db.json";
+
 function loadDB() {
   try {
     return JSON.parse(fs.readFileSync(DB_FILE));
@@ -31,7 +36,7 @@ function saveDB(db) {
   fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
 }
 
-function saveClient(id, type) {
+function saveClient(id, type = "user") {
   const db = loadDB();
   db.clients[id] = {
     type,
@@ -40,7 +45,6 @@ function saveClient(id, type) {
   saveDB(db);
 }
 
-// ADMIN
 function isAdmin(id) {
   return ADMIN_IDS.includes(String(id));
 }
@@ -50,16 +54,21 @@ const history = {};
 
 function pushHistory(id, role, text) {
   if (!history[id]) history[id] = [];
-  history[id].push({ role, content: text });
+
+  history[id].push({
+    role,
+    content: text
+  });
 
   if (history[id].length > 12) history[id].shift();
 }
 
-// AI
+// AI SYSTEM PROMPT
 const SYSTEM = `
 Ты помощник агентства недвижимости РеалИнвест.
-Город Тирасполь.
-Адрес: ул. Восстания 10.
+
+Город Тирасполь
+Адрес: ул. Восстания 10
 
 Менеджеры:
 Сергей 77726536
@@ -69,22 +78,37 @@ const SYSTEM = `
 Отвечай коротко.
 `;
 
+// AI FUNCTION
 async function askAI(id, text) {
 
-  pushHistory(id, "user", text);
+  if (!ai) return null;
 
-  const res = await ai.messages.create({
-    model: "claude-3-haiku-20240307",
-    max_tokens: 200,
-    system: SYSTEM,
-    messages: history[id]
-  });
+  try {
 
-  const reply = res.content[0].text;
+    pushHistory(id, "user", text);
 
-  pushHistory(id, "assistant", reply);
+    const res = await ai.messages.create({
+      model: "claude-3-haiku-20240307",
+      max_tokens: 200,
+      system: SYSTEM,
+      messages: history[id]
+    });
 
-  return reply;
+    const reply = res?.content?.[0]?.text || null;
+
+    if (reply) {
+      pushHistory(id, "assistant", reply);
+    }
+
+    return reply;
+
+  } catch (err) {
+
+    console.log("AI ERROR:", err.message);
+    return null;
+
+  }
+
 }
 
 // SEARCH
@@ -93,16 +117,12 @@ function searchProperties(query) {
   const db = loadDB();
   query = query.toLowerCase();
 
-  return db.properties.filter(p => {
-
-    return (
-      p.title.toLowerCase().includes(query) ||
-      p.address.toLowerCase().includes(query) ||
-      p.price.toLowerCase().includes(query) ||
-      (p.rooms || "").includes(query)
-    );
-
-  });
+  return db.properties.filter(p =>
+    (p.title || "").toLowerCase().includes(query) ||
+    (p.address || "").toLowerCase().includes(query) ||
+    (p.price || "").toLowerCase().includes(query) ||
+    (p.rooms || "").toLowerCase().includes(query)
+  );
 
 }
 
@@ -138,23 +158,33 @@ ${prop.desc || ""}
     }
   };
 
-  if (prop.photo)
-    await bot.sendPhoto(chatId, prop.photo, { caption, ...keyboard });
-  else
-    await bot.sendMessage(chatId, caption, keyboard);
+  try {
+
+    if (prop.photo)
+      await bot.sendPhoto(chatId, prop.photo, { caption, ...keyboard });
+    else
+      await bot.sendMessage(chatId, caption, keyboard);
+
+  } catch (err) {
+
+    console.log("showProperty error:", err.message);
+    await bot.sendMessage(chatId, caption);
+
+  }
+
 }
 
-// PHONE
+// PHONE PARSER
 function getPhone(text) {
   const m = text.replace(/[^\d+]/g, "").match(/\+?\d{7,15}/);
   return m ? m[0] : null;
 }
 
-// STATE
+// STATES
 const userState = {};
 const addState = {};
 
-// MENU
+// KEYBOARDS
 const mainKb = {
   reply_markup: {
     keyboard: [
@@ -211,17 +241,20 @@ bot.on("contact", async msg => {
   const phone = msg.contact.phone_number;
 
   const text =
-`НОВАЯ ЗАЯВКА
+`📥 НОВАЯ ЗАЯВКА
 
 Имя: ${msg.from.first_name}
 Телефон: ${phone}
 ID: ${msg.from.id}`;
 
-  await bot.sendMessage(ADMIN_GROUP, text);
+  try {
+    await bot.sendMessage(ADMIN_GROUP, text);
+  } catch (err) {
+    console.log("Lead error:", err.message);
+  }
 
   bot.sendMessage(msg.chat.id,
-`Заявка принята.
-Менеджер скоро свяжется.`,
+`Спасибо! Менеджер скоро свяжется.`,
 mainKb);
 
 });
@@ -237,7 +270,7 @@ bot.onText(/\/add/, msg => {
 
 });
 
-// MESSAGE
+// MESSAGE HANDLER
 bot.on("message", async msg => {
 
   const id = msg.chat.id;
@@ -286,7 +319,7 @@ bot.on("message", async msg => {
   const found = searchProperties(text);
 
   if (found.length) {
-    await bot.sendMessage(id, "Нашел варианты:");
+    await bot.sendMessage(id, "Нашёл варианты:");
     return showProperty(id, found[0], 0, found.length);
   }
 
@@ -296,15 +329,19 @@ bot.on("message", async msg => {
   if (phone) {
 
     const lead =
-`НОВАЯ ЗАЯВКА
+`📥 НОВАЯ ЗАЯВКА
 
 Телефон: ${phone}
 ID: ${id}`;
 
-    await bot.sendMessage(ADMIN_GROUP, lead);
+    try {
+      await bot.sendMessage(ADMIN_GROUP, lead);
+    } catch (err) {
+      console.log("Lead send error:", err.message);
+    }
 
     return bot.sendMessage(id,
-"Спасибо. Менеджер свяжется.",
+"Спасибо! Менеджер свяжется с вами.",
 mainKb);
   }
 
@@ -315,11 +352,23 @@ mainKb);
 
     const reply = await askAI(id, text);
 
-    bot.sendMessage(id, reply, mainKb);
+    if (reply) {
+      bot.sendMessage(id, reply, mainKb);
+    } else {
+      bot.sendMessage(id,
+        "Напишите ваш номер телефона и менеджер свяжется с вами.",
+        contactKb
+      );
+    }
 
-  } catch {
+  } catch (err) {
 
-    bot.sendMessage(id, "Ошибка. Попробуйте позже");
+    console.log("BOT ERROR:", err.message);
+
+    bot.sendMessage(id,
+      "Напишите номер телефона и менеджер свяжется с вами.",
+      contactKb
+    );
 
   }
 
@@ -331,13 +380,15 @@ bot.on("callback_query", async q => {
   const db = loadDB();
   const id = q.message.chat.id;
 
+  if (q.data === "noop") return;
+
   if (q.data.startsWith("prop:")) {
 
     const idx = Number(q.data.split(":")[1]);
 
     if (idx < 0 || idx >= db.properties.length) return;
 
-    await bot.deleteMessage(id, q.message.message_id);
+    await bot.deleteMessage(id, q.message.message_id).catch(()=>{});
 
     await showProperty(id, db.properties[idx], idx, db.properties.length);
 
@@ -345,5 +396,13 @@ bot.on("callback_query", async q => {
 
 });
 
-// START LOG
-console.log("БОТ РЕАЛИНВЕСТ ЗАПУЩЕН");
+// CRASH PROTECTION
+process.on("uncaughtException", err => {
+  console.log("UNCAUGHT:", err);
+});
+
+process.on("unhandledRejection", err => {
+  console.log("REJECTION:", err);
+});
+
+console.log("🚀 РеалИнвест БОТ запущен");
