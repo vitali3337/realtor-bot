@@ -5,12 +5,14 @@ const fs = require("fs");
 
 const TOKEN = process.env.TELEGRAM_TOKEN;
 const AI_KEY = process.env.ANTHROPIC_API_KEY;
-const ADMIN_GROUP = -1003773163201;
+const ADMIN_GROUP = Number(process.env.ADMIN_GROUP) || -1003773163201;
 const ADMIN_IDS = (process.env.ADMIN_IDS || "5705817827").split(",").map(s => s.trim());
 const DB_FILE = "./db.json";
 
 if (!TOKEN) { console.error("Нет TELEGRAM_TOKEN"); process.exit(1); }
 if (!AI_KEY) { console.error("Нет ANTHROPIC_API_KEY"); process.exit(1); }
+
+console.log("ADMIN_GROUP =", ADMIN_GROUP);
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 const ai = new Anthropic({ apiKey: AI_KEY });
@@ -103,18 +105,16 @@ async function showProperty(chatId, prop, idx, total) {
     (prop.area  ? "Площадь: " + prop.area + "\n"  : "") +
     (prop.floor ? "Этаж: " + prop.floor + "\n"    : "") +
     (prop.desc  ? "\n" + prop.desc + "\n"          : "") +
-    "\n" +
-    "Тел: 777 26536 / 777 72473\n" +
-    "ул. Восстания 10";
+    "\nТел: 777 26536 / 777 72473\nул. Восстания 10";
 
   const kb = {
     reply_markup: {
       inline_keyboard: [
         [{ text: "Хочу посмотреть", callback_data: "want:" + prop.id }],
         [
-          { text: idx > 0        ? "Пред" : " ", callback_data: idx > 0        ? "prop:" + (idx - 1) : "noop" },
-          { text: (idx + 1) + " из " + total,    callback_data: "noop" },
-          { text: idx < total - 1 ? "След" : " ", callback_data: idx < total - 1 ? "prop:" + (idx + 1) : "noop" }
+          { text: idx > 0         ? "◀ Пред" : " ", callback_data: idx > 0         ? "prop:" + (idx-1) : "noop" },
+          { text: (idx+1) + " из " + total,          callback_data: "noop" },
+          { text: idx < total - 1 ? "След ▶" : " ", callback_data: idx < total - 1 ? "prop:" + (idx+1) : "noop" }
         ]
       ]
     }
@@ -126,29 +126,38 @@ async function showProperty(chatId, prop, idx, total) {
     } else {
       await bot.sendMessage(chatId, caption, { parse_mode: "Markdown", ...kb });
     }
-  } catch {
+  } catch (e) {
+    console.error("showProperty error:", e.message);
     await bot.sendMessage(chatId, caption, { parse_mode: "Markdown", ...kb });
   }
 }
 
-// ЗАЯВКА
+// ЗАЯВКА В ГРУППУ
 async function sendLead(msg, phone) {
   const u = userState[msg.chat.id] || {};
-  await bot.sendMessage(ADMIN_GROUP,
-    "НОВАЯ ЗАЯВКА\n\n" +
+  const text =
+    "НОВАЯ ЗАЯВКА - РеалИнвест\n\n" +
     "Тип: " + (u.type || "Покупка") + "\n" +
     (u.property ? "Объект: " + u.property + "\n" : "") +
     "Имя: " + (msg.from.first_name || "-") + " " + (msg.from.last_name || "") + "\n" +
     "Username: @" + (msg.from.username || "нет") + "\n" +
-    "Телефон: " + phone,
-    {
+    "ID: " + msg.from.id + "\n" +
+    "Телефон: " + phone;
+
+  console.log("Отправляю заявку в группу", ADMIN_GROUP, "телефон:", phone);
+
+  try {
+    await bot.sendMessage(ADMIN_GROUP, text, {
       reply_markup: {
         inline_keyboard: [[
           { text: "Позвонить " + phone, url: "tel:" + phone.replace(/\D/g, "") }
         ]]
       }
-    }
-  ).catch(e => console.error("lead:", e.message));
+    });
+    console.log("Заявка отправлена успешно!");
+  } catch (e) {
+    console.error("ОШИБКА отправки заявки:", e.message, "code:", e.code);
+  }
 }
 
 async function confirmLead(chatId, msg, phone) {
@@ -185,6 +194,18 @@ bot.onText(/\/clear/, msg => {
   bot.sendMessage(msg.chat.id, "Начнём сначала!", mainKb);
 });
 
+bot.onText(/\/ping/, async msg => {
+  if (!isAdmin(msg.chat.id)) return;
+  console.log("Ping от", msg.chat.id, "отправляю в группу", ADMIN_GROUP);
+  try {
+    await bot.sendMessage(ADMIN_GROUP, "Тест! Бот работает. ID группы: " + ADMIN_GROUP);
+    bot.sendMessage(msg.chat.id, "Сообщение в группу отправлено!");
+  } catch (e) {
+    bot.sendMessage(msg.chat.id, "Ошибка: " + e.message);
+    console.error("ping error:", e);
+  }
+});
+
 bot.onText(/\/add/, msg => {
   if (!isAdmin(msg.chat.id)) return;
   addState[msg.chat.id] = { step: "photo" };
@@ -196,7 +217,7 @@ bot.onText(/\/list/, msg => {
   const db = loadDB();
   if (!db.properties.length) return bot.sendMessage(msg.chat.id, "Объектов нет. Добавь через /add");
   let text = "Объекты (" + db.properties.length + "):\n\n";
-  db.properties.forEach((p, i) => { text += (i + 1) + ". " + p.title + " — " + p.price + "\n"; });
+  db.properties.forEach((p, i) => { text += (i+1) + ". " + p.title + " — " + p.price + "\n"; });
   text += "\n/delete N — удалить";
   bot.sendMessage(msg.chat.id, text);
 });
@@ -237,9 +258,9 @@ bot.onText(/\/stats/, msg => {
   if (!isAdmin(msg.chat.id)) return;
   const db = loadDB();
   bot.sendMessage(msg.chat.id,
-    "Статистика:\n\n" +
-    "Клиентов: " + Object.keys(db.clients).length + "\n" +
-    "Объектов: " + db.properties.length
+    "Статистика:\n\nКлиентов: " + Object.keys(db.clients).length +
+    "\nОбъектов: " + db.properties.length +
+    "\n\nID группы: " + ADMIN_GROUP
   );
 });
 
@@ -344,7 +365,7 @@ bot.on("message", async msg => {
       delete addState[id];
       return bot.sendMessage(id,
         "Объект добавлен!\n\n" + prop.title + "\n" + prop.address + "\n" + prop.price +
-        "\n\nВсего объектов: " + db.properties.length + "\n\nРазослать? /broadcast"
+        "\n\nВсего: " + db.properties.length + "\n\nРазослать? /broadcast"
       );
     }
   }
@@ -405,4 +426,11 @@ bot.on("message", async msg => {
   }
 });
 
-console.log("РеалИнвест БОТ запущен!");
+// ТЕСТ ПРИ ЗАПУСКЕ
+setTimeout(() => {
+  bot.sendMessage(ADMIN_GROUP, "РеалИнвест бот запущен и готов к работе!")
+    .then(() => console.log("Тест в группу: OK"))
+    .catch(e => console.error("Тест в группу ОШИБКА:", e.message));
+}, 3000);
+
+console.log("РеалИнвест БОТ запущен! Группа:", ADMIN_GROUP);
