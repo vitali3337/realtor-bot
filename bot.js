@@ -10,7 +10,8 @@ const ADMIN_GROUP = Number(process.env.ADMIN_GROUP) || -1003773163201;
 const ADMIN_IDS = (process.env.ADMIN_IDS || "5705817827").split(",");
 
 if (!TOKEN) {
-  console.log("❌ Нет TELEGRAM_TOKEN");
+  console.log("8532518038:AAFLRsoSdUdhV0NFBkCT9k6BGS-BhD_xexI
+              ");
   process.exit();
 }
 
