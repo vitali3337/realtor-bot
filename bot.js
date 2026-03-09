@@ -3,15 +3,17 @@ const TelegramBot = require("node-telegram-bot-api");
 const Anthropic = require("@anthropic-ai/sdk");
 const fs = require("fs");
 
+// =======================
 // ENV
+// =======================
+
 const TOKEN = process.env.TELEGRAM_TOKEN;
 const AI_KEY = process.env.ANTHROPIC_API_KEY;
 const ADMIN_GROUP = Number(process.env.ADMIN_GROUP) || -1003773163201;
 const ADMIN_IDS = (process.env.ADMIN_IDS || "5705817827").split(",");
 
 if (!TOKEN) {
-  console.log("8532518038:AAFLRsoSdUdhV0NFBkCT9k6BGS-BhD_xexI
-              ");
+  console.log("❌ Нет TELEGRAM_TOKEN");
   process.exit();
 }
 
@@ -22,7 +24,10 @@ if (AI_KEY) {
   ai = new Anthropic({ apiKey: AI_KEY });
 }
 
+// =======================
 // DATABASE
+// =======================
+
 const DB_FILE = "./db.json";
 
 function loadDB() {
@@ -37,155 +42,20 @@ function saveDB(db) {
   fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
 }
 
-function saveClient(id, type = "user") {
+function saveClient(id) {
   const db = loadDB();
+
   db.clients[id] = {
-    type,
     date: new Date().toISOString()
   };
+
   saveDB(db);
 }
 
-function isAdmin(id) {
-  return ADMIN_IDS.includes(String(id));
-}
-
-// HISTORY
-const history = {};
-
-function pushHistory(id, role, text) {
-  if (!history[id]) history[id] = [];
-
-  history[id].push({
-    role,
-    content: text
-  });
-
-  if (history[id].length > 12) history[id].shift();
-}
-
-// AI SYSTEM PROMPT
-const SYSTEM = `
-Ты помощник агентства недвижимости РеалИнвест.
-
-Город Тирасполь
-Адрес: ул. Восстания 10
-
-Менеджеры:
-Сергей 77726536
-Александр 77772487
-Виталий 77772473
-
-Отвечай коротко.
-`;
-
-// AI FUNCTION
-async function askAI(id, text) {
-
-  if (!ai) return null;
-
-  try {
-
-    pushHistory(id, "user", text);
-
-    const res = await ai.messages.create({
-      model: "claude-3-haiku-20240307",
-      max_tokens: 200,
-      system: SYSTEM,
-      messages: history[id]
-    });
-
-    const reply = res?.content?.[0]?.text || null;
-
-    if (reply) {
-      pushHistory(id, "assistant", reply);
-    }
-
-    return reply;
-
-  } catch (err) {
-
-    console.log("AI ERROR:", err.message);
-    return null;
-
-  }
-
-}
-
-// SEARCH
-function searchProperties(query) {
-
-  const db = loadDB();
-  query = query.toLowerCase();
-
-  return db.properties.filter(p =>
-    (p.title || "").toLowerCase().includes(query) ||
-    (p.address || "").toLowerCase().includes(query) ||
-    (p.price || "").toLowerCase().includes(query) ||
-    (p.rooms || "").toLowerCase().includes(query)
-  );
-
-}
-
-// SHOW PROPERTY
-async function showProperty(chatId, prop, idx, total) {
-
-  const caption =
-`🏠 ${prop.title}
-
-📍 ${prop.address}
-
-💰 ${prop.price}
-
-${prop.rooms || ""}
-${prop.area || ""}
-${prop.floor || ""}
-
-${prop.desc || ""}
-
-☎ 77726536 / 77772473
-ул. Восстания 10`;
-
-  const keyboard = {
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: "Хочу посмотреть", callback_data: "want:" + prop.id }],
-        [
-          { text: "⬅", callback_data: "prop:" + (idx - 1) },
-          { text: (idx + 1) + "/" + total, callback_data: "noop" },
-          { text: "➡", callback_data: "prop:" + (idx + 1) }
-        ]
-      ]
-    }
-  };
-
-  try {
-
-    if (prop.photo)
-      await bot.sendPhoto(chatId, prop.photo, { caption, ...keyboard });
-    else
-      await bot.sendMessage(chatId, caption, keyboard);
-
-  } catch (err) {
-
-    console.log("showProperty error:", err.message);
-    await bot.sendMessage(chatId, caption);
-
-  }
-
-}
-
-// PHONE PARSER
-function getPhone(text) {
-  const m = text.replace(/[^\d+]/g, "").match(/\+?\d{7,15}/);
-  return m ? m[0] : null;
-}
-
-// STATES
-const userState = {};
-const addState = {};
-
+// =======================
 // KEYBOARDS
+// =======================
+
 const mainKb = {
   reply_markup: {
     keyboard: [
@@ -206,37 +76,194 @@ const contactKb = {
   }
 };
 
+// =======================
+// AI
+// =======================
+
+const history = {};
+
+function pushHistory(id, role, text) {
+  if (!history[id]) history[id] = [];
+
+  history[id].push({
+    role,
+    content: text
+  });
+
+  if (history[id].length > 10) history[id].shift();
+}
+
+const SYSTEM = `
+Ты помощник агентства недвижимости РеалИнвест.
+
+Город: Тирасполь
+Адрес: ул. Восстания 10
+
+Менеджеры:
+Сергей 77726536
+Виталий 77772473
+
+Отвечай коротко.
+`;
+
+async function askAI(id, text) {
+
+  if (!ai) return null;
+
+  try {
+
+    pushHistory(id, "user", text);
+
+    const res = await ai.messages.create({
+      model: "claude-3-haiku-20240307",
+      max_tokens: 200,
+      system: SYSTEM,
+      messages: history[id]
+    });
+
+    const reply = res?.content?.[0]?.text;
+
+    if (reply) {
+      pushHistory(id, "assistant", reply);
+    }
+
+    return reply;
+
+  } catch (err) {
+    console.log("AI error:", err.message);
+    return null;
+  }
+
+}
+
+// =======================
+// PROPERTY
+// =======================
+
+async function showProperty(chatId, prop) {
+
+  const caption =
+`🏠 ${prop.title}
+
+📍 ${prop.address}
+
+💰 ${prop.price}
+
+☎ 77726536
+ул. Восстания 10`;
+
+  if (prop.photo)
+    bot.sendPhoto(chatId, prop.photo, { caption });
+  else
+    bot.sendMessage(chatId, caption);
+
+}
+
+// =======================
 // START
+// =======================
+
 bot.onText(/\/start/, msg => {
 
   const id = msg.chat.id;
 
-  saveClient(id, "start");
+  saveClient(id);
 
-  bot.sendMessage(id,
-`Добро пожаловать в РеалИнвест
+  bot.sendMessage(
+    id,
+`Добро пожаловать в РеалИнвест 🏠
 
 Продажа недвижимости в Тирасполе
 
-ул. Восстания 10
-☎ 77726536 / 77772473`,
-mainKb);
+Выберите действие:`,
+    mainKb
+  );
 
 });
 
-// VIEW OBJECTS
-bot.onText(/📋 Объекты/, async msg => {
+// =======================
+// BUTTONS
+// =======================
+
+bot.onText(/🏠 Купить/, msg => {
+
+  bot.sendMessage(
+    msg.chat.id,
+`Напишите:
+
+• район
+• количество комнат
+• бюджет
+
+Я подберу варианты.`,
+    mainKb
+  );
+
+});
+
+bot.onText(/🏷 Продать/, msg => {
+
+  bot.sendMessage(
+    msg.chat.id,
+`Отправьте:
+
+• адрес
+• цену
+• фото
+
+Менеджер свяжется с вами.`,
+    contactKb
+  );
+
+});
+
+bot.onText(/📞 Менеджер/, msg => {
+
+  bot.sendMessage(
+    msg.chat.id,
+`Связь с менеджером:
+
+Сергей
+📞 77726536
+
+Виталий
+📞 77772473`,
+    mainKb
+  );
+
+});
+
+bot.onText(/🏦 Ипотека/, msg => {
+
+  bot.sendMessage(
+    msg.chat.id,
+`Мы помогаем оформить ипотеку.
+
+Отправьте номер телефона.`,
+    contactKb
+  );
+
+});
+
+// =======================
+// SHOW OBJECTS
+// =======================
+
+bot.onText(/📋 Объекты/, msg => {
 
   const db = loadDB();
 
   if (!db.properties.length)
     return bot.sendMessage(msg.chat.id, "Объектов пока нет");
 
-  await showProperty(msg.chat.id, db.properties[0], 0, db.properties.length);
+  showProperty(msg.chat.id, db.properties[0]);
 
 });
 
+// =======================
 // CONTACT
+// =======================
+
 bot.on("contact", async msg => {
 
   const phone = msg.contact.phone_number;
@@ -250,20 +277,25 @@ ID: ${msg.from.id}`;
 
   try {
     await bot.sendMessage(ADMIN_GROUP, text);
-  } catch (err) {
-    console.log("Lead error:", err.message);
-  }
+  } catch {}
 
-  bot.sendMessage(msg.chat.id,
-`Спасибо! Менеджер скоро свяжется.`,
-mainKb);
+  bot.sendMessage(
+    msg.chat.id,
+"Спасибо! Менеджер скоро свяжется.",
+mainKb
+  );
 
 });
 
+// =======================
 // ADD PROPERTY
+// =======================
+
+const addState = {};
+
 bot.onText(/\/add/, msg => {
 
-  if (!isAdmin(msg.chat.id)) return;
+  if (!ADMIN_IDS.includes(String(msg.chat.id))) return;
 
   addState[msg.chat.id] = { step: "title" };
 
@@ -271,7 +303,6 @@ bot.onText(/\/add/, msg => {
 
 });
 
-// MESSAGE HANDLER
 bot.on("message", async msg => {
 
   const id = msg.chat.id;
@@ -279,8 +310,8 @@ bot.on("message", async msg => {
 
   if (!text) return;
 
-  // ADD FLOW
-  if (isAdmin(id) && addState[id]) {
+  // ADD PROPERTY FLOW
+  if (addState[id]) {
 
     const st = addState[id];
 
@@ -316,94 +347,15 @@ bot.on("message", async msg => {
 
   }
 
-  // SEARCH
-  const found = searchProperties(text);
-
-  if (found.length) {
-    await bot.sendMessage(id, "Нашёл варианты:");
-    return showProperty(id, found[0], 0, found.length);
-  }
-
-  // PHONE
-  const phone = getPhone(text);
-
-  if (phone) {
-
-    const lead =
-`📥 НОВАЯ ЗАЯВКА
-
-Телефон: ${phone}
-ID: ${id}`;
-
-    try {
-      await bot.sendMessage(ADMIN_GROUP, lead);
-    } catch (err) {
-      console.log("Lead send error:", err.message);
-    }
-
-    return bot.sendMessage(id,
-"Спасибо! Менеджер свяжется с вами.",
-mainKb);
-  }
-
   // AI
-  try {
+  const reply = await askAI(id, text);
 
-    bot.sendChatAction(id, "typing");
-
-    const reply = await askAI(id, text);
-
-    if (reply) {
-      bot.sendMessage(id, reply, mainKb);
-    } else {
-      bot.sendMessage(id,
-        "Напишите ваш номер телефона и менеджер свяжется с вами.",
-        contactKb
-      );
-    }
-
-  } catch (err) {
-
-    console.log("BOT ERROR:", err.message);
-
-    bot.sendMessage(id,
-      "Напишите номер телефона и менеджер свяжется с вами.",
-      contactKb
-    );
-
+  if (reply) {
+    bot.sendMessage(id, reply, mainKb);
   }
 
 });
 
-// CALLBACK
-bot.on("callback_query", async q => {
+// =======================
 
-  const db = loadDB();
-  const id = q.message.chat.id;
-
-  if (q.data === "noop") return;
-
-  if (q.data.startsWith("prop:")) {
-
-    const idx = Number(q.data.split(":")[1]);
-
-    if (idx < 0 || idx >= db.properties.length) return;
-
-    await bot.deleteMessage(id, q.message.message_id).catch(()=>{});
-
-    await showProperty(id, db.properties[idx], idx, db.properties.length);
-
-  }
-
-});
-
-// CRASH PROTECTION
-process.on("uncaughtException", err => {
-  console.log("UNCAUGHT:", err);
-});
-
-process.on("unhandledRejection", err => {
-  console.log("REJECTION:", err);
-});
-
-console.log("🚀 РеалИнвест БОТ запущен");
+console.log("🚀 РеалИнвест бот запущен");
