@@ -1,18 +1,20 @@
 require("dotenv").config();
+
 const TelegramBot = require("node-telegram-bot-api");
 const Anthropic = require("@anthropic-ai/sdk");
 const fs = require("fs");
 
+// ===== ENV =====
 const TOKEN = process.env.TELEGRAM_TOKEN;
 const AI_KEY = process.env.ANTHROPIC_API_KEY;
-
-const ADMIN_GROUP = Number(process.env.ADMIN_GROUP) || -1003773163201;
+const ADMIN_GROUP = Number(process.env.ADMIN_GROUP);
+const ADMIN_IDS = (process.env.ADMIN_IDS || "").split(",");
 
 const DB_FILE = "./db.json";
 
 if (!TOKEN) {
-console.log("Нет TELEGRAM_TOKEN");
-process.exit();
+  console.log("❌ TELEGRAM_TOKEN не найден");
+  process.exit(1);
 }
 
 const bot = new TelegramBot(TOKEN, { polling: true });
@@ -20,171 +22,156 @@ const bot = new TelegramBot(TOKEN, { polling: true });
 let ai = null;
 
 if (AI_KEY) {
-try {
-ai = new Anthropic({ apiKey: AI_KEY });
-} catch {
-ai = null;
-}
+  ai = new Anthropic({ apiKey: AI_KEY });
 }
 
-/* ===== DATABASE ===== */
+// ===== DATABASE =====
 
 function loadDB() {
-try {
-return JSON.parse(fs.readFileSync(DB_FILE,"utf8"));
-} catch {
-return { properties: [], clients: {} };
-}
+  try {
+    return JSON.parse(fs.readFileSync(DB_FILE));
+  } catch {
+    return { properties: [], clients: {} };
+  }
 }
 
 function saveDB(db) {
-fs.writeFileSync(DB_FILE, JSON.stringify(db,null,2));
+  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
 }
 
-function saveClient(id,type){
-const db = loadDB();
+function saveClient(id, type) {
+  const db = loadDB();
 
-db.clients[id] = {
-type,
-date: new Date().toISOString()
+  db.clients[id] = {
+    type,
+    date: new Date().toISOString()
+  };
+
+  saveDB(db);
+}
+
+// ===== PHONE FIX =====
+
+function getPhone(text) {
+
+  if (!text) return null;
+
+  const cleaned = text.replace(/[^\d+]/g, "");
+
+  const match = cleaned.match(/\+?\d{7,15}/);
+
+  return match ? match[0] : null;
+}
+
+// ===== KEYBOARDS =====
+
+const mainKeyboard = {
+  reply_markup: {
+    keyboard: [
+      ["🏠 Купить недвижимость", "🏷 Продать недвижимость"],
+      ["📋 Смотреть объекты", "🏦 Ипотека"],
+      ["📄 Документы", "📞 Менеджер"]
+    ],
+    resize_keyboard: true
+  }
 };
 
-saveDB(db);
-}
-
-/* ===== PHONE ===== */
-
-function getPhone(text){
-
-const m = text
-.replace(/[^\d+]/g,"")
-.match(/+?\d{7,15}/);
-
-return m ? m[0] : null;
-
-}
-
-/* ===== KEYBOARDS ===== */
-
-const mainKb = {
-reply_markup:{
-keyboard:[
-["🏠 Купить недвижимость","🏷 Продать недвижимость"],
-["📋 Смотреть объекты","🏦 Ипотека"],
-["📄 Документы","📞 Менеджер"]
-],
-resize_keyboard:true
-}
+const phoneKeyboard = {
+  reply_markup: {
+    keyboard: [
+      [{ text: "📱 Отправить номер", request_contact: true }]
+    ],
+    resize_keyboard: true,
+    one_time_keyboard: true
+  }
 };
 
-const contactKb = {
-reply_markup:{
-keyboard:[
-[{text:"📱 Отправить номер",request_contact:true}],
-["🔙 Назад"]
-],
-resize_keyboard:true
-}
-};
+// ===== AI PROMPT =====
 
-/* ===== AI ===== */
+const SYSTEM = `
+Ты помощник агентства недвижимости РеалИнвест.
 
-async function askAI(text){
+Город: Тирасполь
+Адрес: ул. Восстания 10
 
-if(!ai) return null;
+Менеджеры:
+Сергей 77726536
+Александр 77772487
+Виталий 77772473
 
-try{
+Отвечай коротко и по делу.
+`;
 
-const res = await ai.messages.create({
-model:"claude-3-haiku-20240307",
-max_tokens:150,
-messages:[
-{
-role:"user",
-content:text
-}
-]
-});
+// ===== AI =====
 
-return res?.content?.[0]?.text || null;
+async function askAI(text) {
 
-}catch(e){
+  if (!ai) return null;
 
-console.log("AI error:",e.message);
-return null;
+  try {
 
-}
+    const res = await ai.messages.create({
+      model: "claude-3-haiku-20240307",
+      max_tokens: 200,
+      system: SYSTEM,
+      messages: [
+        { role: "user", content: text }
+      ]
+    });
 
-}
+    return res.content[0].text;
 
-/* ===== PROPERTY ===== */
+  } catch (err) {
 
-async function showProperty(chatId,prop){
+    console.log("AI error:", err.message);
+    return null;
 
-const caption =
-
-`🏠 ${prop.title}
-
-📍 ${prop.address}
-
-💰 ${prop.price}
-
-☎ 77726536 / 77772473
-ул. Восстания 10`;
-
-try{
-
-if(prop.photo)
-await bot.sendPhoto(chatId,prop.photo,{caption});
-else
-await bot.sendMessage(chatId,caption);
-
-}catch{
-
-bot.sendMessage(chatId,caption);
+  }
 
 }
 
-}
+// ===== START =====
 
-/* ===== START ===== */
+bot.onText(/\/start/, msg => {
 
-bot.onText(//start/,msg=>{
+  const id = msg.chat.id;
 
-const id = msg.chat.id;
-const name = msg.from.first_name || "";
+  saveClient(id, "start");
 
-saveClient(id,"start");
+  bot.sendMessage(
+    id,
+`Здравствуйте!
 
-bot.sendMessage(
+Добро пожаловать в РеалИнвест.
 
-id,
+Продажа недвижимости в Приднестровье.
 
-`Здравствуйте${name ? ", "+name : ""}!
-
-Добро пожаловать в РеалИнвест!
-
-Продажа недвижимости в Приднестровье
-
-ул. Восстания 10
-777 26536 / 777 72473
+📍 ул. Восстания 10
+☎ 777 26536 / 777 72473
 
 Выберите действие:`,
-
-mainKb
-
-);
+    mainKeyboard
+  );
 
 });
 
-/* ===== BUTTONS ===== */
+// ===== MENU =====
 
-bot.onText(/Купить недвижимость/,msg=>{
+bot.on("message", async msg => {
 
-bot.sendMessage(
+  const id = msg.chat.id;
+  const text = msg.text;
 
-msg.chat.id,
+  if (!text) return;
 
+  // КУПИТЬ
+
+  if (text === "🏠 Купить недвижимость") {
+
+    saveClient(id, "buy");
+
+    bot.sendMessage(
+      id,
 `Напишите:
 
 • район
@@ -192,191 +179,167 @@ msg.chat.id,
 • бюджет
 
 Я подберу варианты.`,
+      mainKeyboard
+    );
 
-mainKb
+    return;
 
-);
+  }
 
-});
+  // ПРОДАТЬ
 
-bot.onText(/Продать недвижимость/,msg=>{
+  if (text === "🏷 Продать недвижимость") {
 
-bot.sendMessage(
+    saveClient(id, "sell");
 
-msg.chat.id,
+    bot.sendMessage(
+      id,
+`Мы бесплатно оценим недвижимость и найдём покупателя.
 
-`Отправьте адрес и цену объекта.
+Оставьте номер телефона.`,
+      phoneKeyboard
+    );
 
-Менеджер свяжется с вами.`,
+    return;
 
-contactKb
+  }
 
-);
+  // ДОКУМЕНТЫ
 
-});
+  if (text === "📄 Документы") {
 
-bot.onText(/Смотреть объекты/,async msg=>{
-
-const db = loadDB();
-
-if(!db.properties.length)
-return bot.sendMessage(msg.chat.id,"Объектов пока нет");
-
-showProperty(msg.chat.id,db.properties[0]);
-
-});
-
-bot.onText(/Ипотека/,msg=>{
-
-bot.sendMessage(
-
-msg.chat.id,
-
-`Мы поможем оформить ипотеку.
-
-Напишите стоимость объекта.`,
-
-mainKb
-
-);
-
-});
-
-bot.onText(/Документы/,msg=>{
-
-bot.sendMessage(
-
-msg.chat.id,
-
+    bot.sendMessage(
+      id,
 `Поможем оформить:
 
 • договор купли-продажи
 • приватизацию
 • наследство
 • регистрацию недвижимости`,
+      mainKeyboard
+    );
 
-mainKb
+    return;
 
-);
+  }
 
-});
+  // ИПОТЕКА
 
-bot.onText(/Менеджер/,msg=>{
+  if (text === "🏦 Ипотека") {
 
-bot.sendMessage(
+    bot.sendMessage(
+      id,
+`Поможем оформить ипотеку.
 
-msg.chat.id,
+Напишите стоимость объекта и первоначальный взнос.`,
+      mainKeyboard
+    );
 
-`Менеджеры РеалИнвест:
+    return;
+
+  }
+
+  // МЕНЕДЖЕР
+
+  if (text === "📞 Менеджер") {
+
+    bot.sendMessage(
+      id,
+`Наши менеджеры:
 
 Сергей 77726536
 Александр 77772487
-Виталий 77772473`,
+Виталий 77772473
 
-contactKb
+Оставьте номер телефона.`,
+      phoneKeyboard
+    );
 
-);
+    return;
 
-});
+  }
 
-/* ===== CONTACT ===== */
+  // PHONE TEXT
 
-bot.on("contact",async msg=>{
+  const phone = getPhone(text);
 
-const phone = msg.contact.phone_number;
+  if (phone) {
 
-try{
-
-await bot.sendMessage(
-
-ADMIN_GROUP,
-
-`НОВАЯ ЗАЯВКА
+    bot.sendMessage(
+      ADMIN_GROUP,
+`📥 Новая заявка
 
 Имя: ${msg.from.first_name}
-Телефон: ${phone}`
-
-);
-
-}catch{}
-
-bot.sendMessage(msg.chat.id,"Спасибо! Менеджер свяжется.",mainKb);
-
-});
-
-/* ===== MESSAGE ===== */
-
-bot.on("message",async msg=>{
-
-const id = msg.chat.id;
-const text = msg.text;
-
-if(!text || text.startsWith("/")) return;
-
-const phone = getPhone(text);
-
-if(phone){
-
-try{
-
-await bot.sendMessage(
-
-ADMIN_GROUP,
-
-`НОВАЯ ЗАЯВКА
-
 Телефон: ${phone}
-ID: ${id}`
+ID: ${msg.from.id}`
+    ).catch(()=>{});
 
-);
+    bot.sendMessage(
+      id,
+"Спасибо! Менеджер скоро свяжется.",
+      mainKeyboard
+    );
 
-}catch{}
+    return;
 
-return bot.sendMessage(id,"Спасибо! Менеджер свяжется.",mainKb);
+  }
 
-}
+  // AI
 
-try{
+  const reply = await askAI(text);
 
-bot.sendChatAction(id,"typing");
+  if (reply) {
 
-const reply = await askAI(text);
+    bot.sendMessage(id, reply, mainKeyboard);
 
-if(reply){
+  } else {
 
-bot.sendMessage(id,reply,mainKb);
+    bot.sendMessage(
+      id,
+"Напишите номер телефона и менеджер свяжется с вами.",
+      phoneKeyboard
+    );
 
-}else{
-
-bot.sendMessage(
-id,
-"Напишите номер телефона и менеджер свяжется.",
-contactKb
-);
-
-}
-
-}catch{
-
-bot.sendMessage(
-id,
-"Напишите номер телефона и менеджер свяжется.",
-contactKb
-);
-
-}
+  }
 
 });
 
-/* ===== START MESSAGE ===== */
+// ===== CONTACT =====
 
-setTimeout(()=>{
+bot.on("contact", msg => {
 
-bot.sendMessage(
-ADMIN_GROUP,
-"Бот РеалИнвест запущен"
-).catch(()=>{});
+  const phone = msg.contact.phone_number;
 
-},3000);
+  bot.sendMessage(
+    ADMIN_GROUP,
+`📥 Новая заявка
 
-console.log("Бот запущен");
+Имя: ${msg.from.first_name}
+Телефон: ${phone}
+ID: ${msg.from.id}`
+  ).catch(()=>{});
+
+  bot.sendMessage(
+    msg.chat.id,
+    "Спасибо! Менеджер скоро свяжется.",
+    mainKeyboard
+  );
+
+});
+
+// ===== ERRORS =====
+
+bot.on("polling_error", e => {
+  console.log("Polling error:", e.message);
+});
+
+process.on("uncaughtException", e => {
+  console.log("Uncaught:", e);
+});
+
+process.on("unhandledRejection", e => {
+  console.log("Rejection:", e);
+});
+
+console.log("🚀 РеалИнвест бот запущен");
+``
