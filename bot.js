@@ -343,3 +343,11 @@ process.on("unhandledRejection", e => {
 
 console.log("🚀 РеалИнвест бот запущен");
 ``
+setTimeout(() => {
+
+bot.sendMessage(
+ADMIN_GROUP,
+"✅ Бот подключен и может отправлять заявки"
+).catch(e => console.log(e));
+
+},5000);
