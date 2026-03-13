@@ -341,8 +341,20 @@ process.on("unhandledRejection", e => {
   console.log("Rejection:", e);
 });
 
+bot.on("polling_error", e => {
+  console.log("Polling error:", e.message);
+});
+
+process.on("uncaughtException", e => {
+  console.log("Uncaught:", e);
+});
+
+process.on("unhandledRejection", e => {
+  console.log("Rejection:", e);
+});
+
 console.log("🚀 РеалИнвест бот запущен");
-``
+
 setTimeout(() => {
 
 bot.sendMessage(
@@ -350,4 +362,4 @@ ADMIN_GROUP,
 "✅ Бот подключен и может отправлять заявки"
 ).catch(e => console.log(e));
 
-},5000);
+}, 5000);
